@@ -1,0 +1,43 @@
+name: Publicar en GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Activar Pages si hace falta
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - name: Dominio personalizado
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PUT "repos/${{ github.repository }}/pages" -f cname=demo-cordis.potenta.ai || echo "cname: se configura a mano"
+          gh api -X PUT "repos/${{ github.repository }}/pages" -F https_enforced=true || echo "https: todavia sin certificado"
+      - name: Armar carpeta a publicar
+        run: |
+          mkdir -p site
+          cp index.html CNAME .nojekyll site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
