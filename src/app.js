@@ -1,0 +1,584 @@
+/* Prototipo navegable — Cordis · Potenta AI. Datos ficticios, todo corre en el navegador. */
+(function () {
+  'use strict';
+
+  /* ---------- utilidades ---------- */
+  const $ = (s, el) => (el || document).querySelector(s);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const fmt = (n) => '$ ' + Math.round(Number(n) || 0).toLocaleString('es-AR');
+  const pad = (n) => String(n).padStart(2, '0');
+  const ymd = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const HOY = new Date();
+  const HOY_KEY = ymd(HOY);
+  const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+  const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  const fechaLarga = (d) => `${DIAS[d.getDay()]} ${d.getDate()} de ${MESES[d.getMonth()]}`;
+  const fechaCorta = (key) => { const [y, m, d] = key.split('-'); return `${d}/${m}/${y}`; };
+  const fechaMedia = (key) => { const [y, m, d] = key.split('-'); return `${Number(d)} ${MESES[Number(m) - 1].slice(0, 3)} ${y}`; };
+  const ahoraHM = () => pad(new Date().getHours()) + ':' + pad(new Date().getMinutes());
+  const dniFmt = (d) => String(d).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  const edad = (nac) => { const b = new Date(nac); let a = HOY.getFullYear() - b.getFullYear(); const m = HOY.getMonth() - b.getMonth(); if (m < 0 || (m === 0 && HOY.getDate() < b.getDate())) a--; return a; };
+  function diasHabilesAtras(n) { const out = []; const d = new Date(HOY); while (out.length < n) { d.setDate(d.getDate() - 1); if (d.getDay() !== 0 && d.getDay() !== 6) out.push(ymd(d)); } return out; }
+  const uid = (p) => p + Math.random().toString(36).slice(2, 7);
+
+  /* ---------- estado ---------- */
+  const KEY = 'demo-cordis-v1';
+  let S;
+  function seed() {
+    const fix = (x) => ({ ...x, fecha: x.fecha === 'HOY' ? HOY_KEY : x.fecha });
+    const cobros = COBROS_HOY.map((c) => { const t = TURNOS_HOY.find((x) => x.id === c.turno); return { ...c, fecha: HOY_KEY, prof: t.prof, dni: t.dni, por: 'Recepción' }; });
+    return {
+      version: 1, day: HOY_KEY, rol: null, ui: { prof: 'pm', cajaProf: 'pm' },
+      turnos: TURNOS_HOY.map((t) => ({ ...t, fecha: HOY_KEY })),
+      cobros,
+      rendiciones: [...historialRendiciones(diasHabilesAtras(12)),
+        { id: 'r-pr-' + HOY_KEY, prof: 'pr', fecha: HOY_KEY, estado: 'recibida', cerrada: '12:40', enviada: '12:41', recibida: '12:55', turnos: 5, totales: null, cobros: ['c01', 'c02', 'c03', 'c04', 'c05'] }],
+      evoluciones: EVOLUCIONES.map(fix),
+      estudios: ESTUDIOS.map(fix),
+      accesos: [{ dni: '10234567', quien: 'Dra. Méndez', cuando: HOY_KEY + ' 15:04' }, { dni: '14567890', quien: 'Dra. Méndez', cuando: HOY_KEY + ' 15:43' }],
+    };
+  }
+  function load() { try { const raw = localStorage.getItem(KEY); if (raw) { const s = JSON.parse(raw); if (s && s.day === HOY_KEY && s.version === 1) return s; } } catch (e) { } return seed(); }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { } }
+
+  const prof = (id) => PROFESIONALES.find((p) => p.id === id);
+  const pac = (dni) => PACIENTES.find((p) => p.dni === dni);
+  const obra = (id) => OBRAS.find((o) => o.id === id);
+  const nombrePac = (p) => `${p.apellido}, ${p.nombre}`;
+  const turno = (id) => S.turnos.find((t) => t.id === id);
+  const cobroDe = (turnoId) => S.cobros.find((c) => c.turno === turnoId);
+  const ROLES = { recepcion: { nombre: 'Vicky', titulo: 'Recepción', ini: 'V' }, medico: { nombre: 'Dra. Laura Méndez', titulo: 'Profesional', ini: 'LM' }, admin: { nombre: 'Dirección', titulo: 'Administración', ini: 'D' } };
+  const ESTADOS = { solicitado: 'Solicitado', confirmado: 'Confirmado', llego: 'En espera', atencion: 'En atención', atendido: 'Atendido', novino: 'No vino' };
+  const ORIGEN = { whatsapp: ['ti-brand-whatsapp', 'Reservó por WhatsApp'], web: ['ti-world', 'Reservó por la web'], recepcion: ['ti-phone', 'Cargado en recepción'] };
+
+  function totales(cobros) {
+    const t = { efectivo: 0, transferencia: 0, debito: 0, credito: 0, mp: 0, ordenes: 0, total: 0 };
+    cobros.forEach((c) => c.lineas.forEach((l) => { if (l.medio === 'orden') t.ordenes++; else { t[l.medio] += Number(l.importe) || 0; t.total += Number(l.importe) || 0; } }));
+    return t;
+  }
+  const cobrosProfHoy = (p) => S.cobros.filter((c) => c.prof === p && c.fecha === HOY_KEY);
+  const turnosProfHoy = (p) => S.turnos.filter((t) => t.prof === p).sort((a, b) => a.hora.localeCompare(b.hora));
+  const rendicionHoy = (p) => S.rendiciones.find((r) => r.prof === p && r.fecha === HOY_KEY);
+  function totalesRend(r) { if (r.totales) return r.totales; return totales(S.cobros.filter((c) => r.cobros.includes(c.id))); }
+
+  /* ---------- toasts y modal ---------- */
+  function toast(msg, sub) {
+    const box = $('#toasts'); const el = document.createElement('div'); el.className = 'toast';
+    el.innerHTML = `<i class="ti ti-refresh"></i><div><b>${esc(msg)}</b>${sub ? `<div class="tiny" style="opacity:.85;margin-top:2px">${esc(sub)}</div>` : ''}</div>`;
+    box.appendChild(el); setTimeout(() => el.remove(), 4200);
+  }
+  function openModal(html, wide) { $('#modal').innerHTML = `<div class="modal-bg" data-action="modal-bg"><div class="modal${wide ? ' wide' : ''}" role="dialog" aria-modal="true">${html}</div></div>`; const f = $('#modal input,#modal textarea,#modal select'); if (f) f.focus(); }
+  function closeModal() { $('#modal').innerHTML = ''; }
+
+  /* ---------- piezas de UI ---------- */
+  const pill = (estado) => `<span class="pill ${estado}">${ESTADOS[estado] || estado}</span>`;
+  const chipMedio = (l) => `<span class="chip ${l.medio}">${l.medio === 'orden' ? 'Orden ' + esc(l.ref || '') : MEDIOS[l.medio].nombre + ' ' + fmt(l.importe)}</span>`;
+  const chipsCobro = (c) => c.lineas.map(chipMedio).join('');
+  const montoCobro = (c) => { const t = totales([c]); return t.total ? fmt(t.total) : '<span class="muted" style="font-weight:400">Sin cargo</span>'; };
+  const linkPac = (p, tab) => `<a href="#/pacientes/${p.dni}${tab ? '/' + tab : ''}" class="name" style="color:inherit;text-decoration:none">${esc(nombrePac(p))}</a>`;
+  const ORIGEN_CORTO = { whatsapp: 'WhatsApp', web: 'Web', recepcion: 'Recepción' };
+  const origenIcon = (t) => { const o = ORIGEN[t.origen] || ORIGEN.recepcion; return `<span class="nowrap" title="${o[1]}"><i class="ti ${o[0]}" aria-hidden="true"></i> ${ORIGEN_CORTO[t.origen] || 'Recepción'}</span>`; };
+
+  function segProfesionales(current, action, incluirTodos) {
+    const items = PROFESIONALES.map((p) => { const n = turnosProfHoy(p.id).length; return `<button class="${current === p.id ? 'on' : ''}" data-action="${action}" data-id="${p.id}">${esc(p.corto)} <span class="n">${n}</span></button>`; });
+    return `<div class="seg" role="tablist">${items.join('')}</div>`;
+  }
+
+  /* ---------- vistas: login ---------- */
+  function loginView() {
+    return `<div class="login"><div class="card panel" style="padding:32px 34px">
+      <div class="row between"><div class="brand" style="padding:0"><div class="mark">${logo()}</div><div><b>Cordis</b><span>Sistema de gestión del centro</span></div></div><span class="pill info">Prototipo con datos ficticios</span></div>
+      <h1 class="mt-lg">Ingresar como</h1>
+      <p class="muted" style="margin-top:6px">Cada rol ve solo lo que necesita. Elegí uno para recorrer el sistema; podés cambiarlo en cualquier momento.</p>
+      <div class="roles">
+        <button class="role" data-action="login" data-rol="recepcion"><i class="ti ti-desk"></i><b>Recepción</b><span>Agenda del día, llegadas, cobros con medio de pago y rendición de cada profesional.</span></button>
+        <button class="role" data-action="login" data-rol="medico"><i class="ti ti-stethoscope"></i><b>Profesional</b><span>Su agenda, historia clínica de cada paciente, estudios e informes para enviar.</span></button>
+        <button class="role" data-action="login" data-rol="admin"><i class="ti ti-building"></i><b>Dirección</b><span>Todo lo anterior más resumen mensual, importación del sistema anterior y configuración.</span></button>
+      </div>
+      <p class="tiny faint mt-lg">La atención por WhatsApp, la agenda y los recordatorios viven en el sistema de atención; este módulo se conecta a él. Potenta AI, 2026.</p>
+    </div></div>`;
+  }
+  const logo = () => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2 5 4-10 2 5h6"/></svg>`;
+
+  /* ---------- shell ---------- */
+  function navItems() {
+    const r = S.rol; const items = [];
+    if (r === 'medico') { items.push(['agenda', 'ti-calendar', 'Mi agenda']); items.push(['pacientes', 'ti-users', 'Pacientes']); const pend = S.estudios.filter((e) => e.estado === 'realizado').length; items.push(['informes', 'ti-file-text', 'Informes', pend]); }
+    else { items.push(['agenda', 'ti-calendar', 'Agenda del día']); items.push(['caja', 'ti-cash', 'Caja y rendición']); items.push(['rendiciones', 'ti-report-money', 'Rendiciones']); items.push(['pacientes', 'ti-users', 'Pacientes']); }
+    if (r === 'admin') { items.push(['importacion', 'ti-database-import', 'Importación']); items.push(['config', 'ti-settings', 'Configuración']); }
+    return items;
+  }
+  function shell(name, title, sub, body, extraHead) {
+    const rol = ROLES[S.rol];
+    const nav = navItems().map(([id, icon, lbl, badge]) => `<a href="#/${id}" class="${name === id ? 'on' : ''}"><i class="ti ${icon}"></i><span class="lbl">${lbl}</span>${badge ? `<span class="badge">${badge}</span>` : ''}</a>`).join('');
+    return `<div class="app">
+      <aside class="side">
+        <div class="brand"><div class="mark">${logo()}</div><div><b>Cordis</b><span>Sistema de gestión</span></div></div>
+        <nav class="nav">${nav}</nav>
+        <div class="foot"><span class="sync">Sincronizado con el sistema de atención</span><div style="margin-top:6px">Prototipo · <b>Potenta AI</b></div></div>
+      </aside>
+      <div class="main">
+        <div class="topbar">
+          <div class="who"><i class="ti ti-calendar-event"></i> Hoy, ${fechaLarga(HOY)}</div>
+          <div class="row"><div class="who"><span class="avatar">${rol.ini}</span><span><b style="color:var(--ink);font-weight:500">${esc(rol.nombre)}</b> · ${rol.titulo}</span></div>
+            <button class="btn sm ghost" data-action="logout" title="Cambiar de rol"><i class="ti ti-switch-horizontal"></i>Cambiar rol</button>
+            <button class="btn sm ghost" data-action="reset" title="Vuelve los datos del prototipo al estado inicial"><i class="ti ti-restore"></i>Reiniciar demo</button></div>
+        </div>
+        <main class="content">
+          <div class="page-head"><div><h1>${title}</h1>${sub ? `<div class="sub">${sub}</div>` : ''}</div>${extraHead || ''}</div>
+          ${body}
+        </main>
+      </div></div>`;
+  }
+
+  /* ---------- agenda ---------- */
+  function agendaView() {
+    const p = S.rol === 'medico' ? 'pm' : S.ui.prof;
+    const pr = prof(p); const ts = turnosProfHoy(p);
+    const total = S.turnos.length, atendidos = S.turnos.filter((t) => t.estado === 'atendido').length, espera = S.turnos.filter((t) => t.estado === 'llego').length;
+    const sub = S.rol === 'medico' ? `${ts.length} turnos hoy · ${ts.filter((t) => t.estado === 'atendido').length} atendidos` : `${total} turnos en el centro · ${atendidos} atendidos · ${espera} en espera`;
+    const seg = S.rol === 'medico' ? '' : segProfesionales(p, 'seg-prof');
+    let rows = ts.map(agendaRow).join('');
+    if (!ts.length) rows = `<tr><td colspan="8" class="muted" style="padding:28px;text-align:center">Sin turnos hoy.${pr.nota ? ' ' + esc(pr.nota) : ''}</td></tr>`;
+    const body = `
+      ${seg ? `<div class="mb">${seg}</div>` : ''}
+      <div class="panel tight">
+        <div class="head"><div><h2>${esc(pr.nombre)}</h2><div class="small muted">${esc(pr.esp)} · turnos de ${pr.dur} min${pr.gcal ? ' · bloqueos desde Google Calendar' : ''}</div></div>
+          <div class="row"><button class="btn sm" data-action="nuevo-turno"><i class="ti ti-plus"></i>Agregar turno</button><button class="btn sm" data-action="bloquear"><i class="ti ti-lock"></i>Bloquear horario</button></div></div>
+        <div class="table-wrap"><table class="tbl">
+          <thead><tr><th>Hora</th><th>Paciente</th><th>Tipo</th><th>Estado</th><th>Llegó</th><th>Entró</th><th>Cobro</th><th></th></tr></thead>
+          <tbody>${rows}</tbody></table></div>
+      </div>
+      <div class="row mt small muted" style="gap:16px"><span>${pill('solicitado')} reservó y no confirmó</span><span>${pill('confirmado')} confirmó por WhatsApp</span><span>${pill('llego')} llegó al centro</span><span>${pill('atencion')} con el profesional</span><span>${pill('atendido')}</span><span>${pill('novino')} dispara el recupero automático</span></div>`;
+    return shell('agenda', S.rol === 'medico' ? 'Mi agenda' : 'Agenda del día', sub, body);
+  }
+  function agendaRow(t) {
+    const p = pac(t.dni); const o = obra(p.obra); const c = cobroDe(t.id);
+    let cobro = '';
+    if (c) cobro = `<div class="num" style="font-weight:500">${montoCobro(c)}</div><div>${chipsCobro(c)}</div>`;
+    else if (t.sena) cobro = `<span class="chip mp">Seña MP ${fmt(t.sena)}</span><span class="tiny muted"> cobrada al reservar</span>`;
+    else if (t.estado === 'novino') cobro = `<span class="faint">—</span>`;
+    else cobro = `<span class="muted small">Pendiente</span>`;
+    const acciones = [];
+    const puedeCobrar = S.rol !== 'medico';
+    if (['solicitado', 'confirmado'].includes(t.estado)) { acciones.push(btn('llego', t.id, 'Llegó', 'teal')); acciones.push(btn('novino', t.id, 'No vino', 'danger')); acciones.push(btn('reprogramar', t.id, 'Reprogramar')); }
+    if (t.estado === 'llego') { acciones.push(btn('entro', t.id, 'Entró', 'teal')); if (puedeCobrar && !c) acciones.push(btn('cobrar', t.id, 'Cobrar', 'primary')); }
+    if (t.estado === 'atencion') { acciones.push(btn('atendido', t.id, 'Atendido', 'teal')); if (puedeCobrar && !c) acciones.push(btn('cobrar', t.id, 'Cobrar', 'primary')); }
+    if (t.estado === 'atendido' && puedeCobrar) { acciones.push(c ? btn('ver-cobro', c.id, 'Ver cobro') : btn('cobrar', t.id, 'Cobrar', 'primary')); }
+    if (t.estado === 'novino') acciones.push(btn('reprogramar', t.id, 'Reprogramar'));
+    if (S.rol === 'medico') acciones.push(`<a class="btn sm" href="#/pacientes/${p.dni}/historia"><i class="ti ti-notes"></i>Historia</a>`);
+    const dim = t.estado === 'novino' ? ' class="dim"' : '';
+    return `<tr${dim}>
+      <td class="num" style="font-weight:500">${t.hora}</td>
+      <td style="min-width:280px">${linkPac(p)}<span class="sub">DNI ${dniFmt(p.dni)} · ${esc(o.nombre)} · ${origenIcon(t)}${t.reservado ? ' ' + esc(t.reservado) : ''}${t.nuevo ? ' <span class="pill solicitado" style="font-size:11px">Paciente nuevo</span>' : ''}</span></td>
+      <td>${esc(t.tipo)}</td>
+      <td>${pill(t.estado)}</td>
+      <td class="num">${t.llego || '<span class="faint">—</span>'}</td>
+      <td class="num">${t.entro || '<span class="faint">—</span>'}</td>
+      <td>${cobro}</td>
+      <td class="actions">${acciones.join(' ')}</td></tr>`;
+  }
+  const btn = (action, id, label, cls) => `<button class="btn sm ${cls || ''}" data-action="${action}" data-id="${id}">${label}</button>`;
+
+  /* ---------- cobro ---------- */
+  function lineasSugeridas(t, p) {
+    const o = obra(p.obra); const l = [];
+    if (t.sena) l.push({ medio: 'mp', importe: t.sena, ref: 'Cobrada al reservar', locked: true });
+    const pr = prof(t.prof); const cop = pr.estudio ? o.copagoEstudio : o.copago;
+    if (o.orden) l.push({ medio: 'orden', importe: 0, ref: o.nombre + ' ' });
+    if (cop > 0) l.push({ medio: 'efectivo', importe: Math.max(0, cop - (t.sena || 0)), ref: '' });
+    if (!l.length) l.push({ medio: 'efectivo', importe: 0, ref: '' });
+    return l;
+  }
+  function lineaHTML(l, i) {
+    const opts = Object.keys(MEDIOS).map((k) => `<option value="${k}" ${l.medio === k ? 'selected' : ''}>${MEDIOS[k].nombre}</option>`).join('');
+    const lk = l.locked ? ' locked' : ''; const dis = l.locked ? ' disabled' : '';
+    return `<div class="lineitem${lk}" data-i="${i}">
+      <select class="input" name="medio"${dis}>${opts}</select>
+      <input class="input ref" name="ref" placeholder="${l.medio === 'orden' ? 'N° de orden' : 'Referencia (opcional)'}" value="${esc(l.ref || '')}"${dis}>
+      <input class="input num" name="importe" type="number" min="0" step="500" value="${l.medio === 'orden' ? 0 : l.importe}" ${l.medio === 'orden' ? 'disabled' : ''}${dis} style="text-align:right">
+      <button class="btn xs ghost" data-action="cobro-del" data-i="${i}" title="Quitar línea" aria-label="Quitar línea"${dis}><i class="ti ti-x"></i></button></div>`;
+  }
+  let COBRO = null;
+  function abrirCobro(turnoId) {
+    const t = turno(turnoId); const p = pac(t.dni); const o = obra(p.obra); const pr = prof(t.prof);
+    COBRO = { turno: t.id, lineas: lineasSugeridas(t, p) };
+    openModal(`<div class="m-head"><div><h2>Registrar cobro</h2><div class="small muted">${esc(nombrePac(p))} · DNI ${dniFmt(p.dni)} · ${esc(o.nombre)}${p.afiliado ? ' ' + esc(p.afiliado) : ''}</div><div class="small muted">Turno ${t.hora} · ${esc(t.tipo)} · ${esc(pr.corto)}</div></div><button class="btn sm ghost" data-action="modal-close" aria-label="Cerrar"><i class="ti ti-x"></i></button></div>
+      <div class="lines" id="lineas">${COBRO.lineas.map(lineaHTML).join('')}</div>
+      <div class="row mt"><button class="btn sm" data-action="cobro-add"><i class="ti ti-plus"></i>Agregar línea</button><span class="tiny muted">Un cobro puede combinar varios medios: la rendición los separa sola.</span></div>
+      <div class="total"><span>Total cobrado</span><span class="v" id="cobro-total">${fmt(totales([COBRO]).total)}</span></div>
+      <div id="cobro-err" class="tiny" style="color:var(--red);min-height:16px"></div>
+      <div class="m-foot"><button class="btn" data-action="modal-close">Cancelar</button><button class="btn primary" data-action="cobro-save"><i class="ti ti-check"></i>Registrar cobro</button></div>`);
+  }
+  function leerLineas() {
+    const out = [];
+    document.querySelectorAll('#lineas .lineitem').forEach((row, i) => { const prev = COBRO.lineas[i] || {}; const medio = $('select', row).value; out.push({ medio, ref: $('input[name=ref]', row).value.trim(), importe: medio === 'orden' ? 0 : Number($('input[name=importe]', row).value || 0), locked: prev.locked }); });
+    return out;
+  }
+  function refrescarCobro() { COBRO.lineas = leerLineas(); $('#lineas').innerHTML = COBRO.lineas.map(lineaHTML).join(''); $('#cobro-total').textContent = fmt(totales([COBRO]).total); }
+  function guardarCobro() {
+    const lineas = leerLineas(); const err = $('#cobro-err');
+    if (!lineas.length) { err.textContent = 'Agregá al menos una línea.'; return; }
+    if (lineas.some((l) => l.medio !== 'orden' && (!(l.importe >= 0) || isNaN(l.importe)))) { err.textContent = 'Revisá los importes: tienen que ser números.'; return; }
+    if (lineas.some((l) => l.medio !== 'orden' && l.importe === 0) && !lineas.some((l) => l.medio === 'orden')) { err.textContent = 'Hay una línea con importe 0. Quitala o cargá el importe.'; return; }
+    const t = turno(COBRO.turno); const pr = prof(t.prof);
+    S.cobros.push({ id: uid('c'), turno: t.id, fecha: HOY_KEY, prof: t.prof, dni: t.dni, hora: ahoraHM(), lineas: lineas.map((l) => ({ medio: l.medio, importe: l.importe, ref: l.ref })), por: ROLES[S.rol].nombre });
+    save(); closeModal(); render();
+    toast('Cobro registrado', `La rendición de ${pr.corto} se actualizó. ${totales([{ lineas }]).ordenes ? 'La orden queda registrada para la liquidación.' : ''}`);
+  }
+  function verCobro(id) {
+    const c = S.cobros.find((x) => x.id === id); const t = turno(c.turno); const p = pac(c.dni);
+    openModal(`<div class="m-head"><div><h2>Cobro registrado</h2><div class="small muted">${esc(nombrePac(p))} · turno ${t.hora} · cargado ${c.hora} por ${esc(c.por)}</div></div><button class="btn sm ghost" data-action="modal-close" aria-label="Cerrar"><i class="ti ti-x"></i></button></div>
+      <table class="tbl"><thead><tr><th>Medio</th><th>Referencia</th><th class="amt">Importe</th></tr></thead><tbody>
+      ${c.lineas.map((l) => `<tr><td>${MEDIOS[l.medio].nombre}</td><td class="muted">${esc(l.ref || '—')}</td><td class="amt">${l.medio === 'orden' ? '<span class="muted">sin cargo</span>' : fmt(l.importe)}</td></tr>`).join('')}
+      </tbody></table>
+      <div class="total"><span>Total</span><span class="v">${montoCobro(c)}</span></div>
+      <p class="tiny muted mt">Los cobros no se editan: si hubo un error, se anula y se carga de nuevo, y ambos movimientos quedan en la rendición.</p>
+      <div class="m-foot"><button class="btn danger" data-action="anular-cobro" data-id="${c.id}"><i class="ti ti-ban"></i>Anular</button><button class="btn primary" data-action="modal-close">Cerrar</button></div>`);
+  }
+
+  /* ---------- caja y rendición ---------- */
+  function receiptHTML(p, cobros, rend, turnos, opts) {
+    const t = totales(cobros); const pr = prof(p); const o = opts || {};
+    const fecha = o.fecha || HOY_KEY;
+    const estado = rend ? rend.estado : 'abierta';
+    const atendidos = turnos ? turnos.filter((x) => x.estado === 'atendido').length : (rend ? rend.turnos : 0);
+    const novino = turnos ? turnos.filter((x) => x.estado === 'novino').length : 0;
+    const otros = t.total - t.efectivo;
+    const tl = ['abierta', 'cerrada', 'enviada', 'recibida']; const idx = tl.indexOf(estado);
+    const labels = { abierta: 'Abierta', cerrada: 'Cerrada' + (rend && rend.cerrada ? ' ' + rend.cerrada : ''), enviada: 'Enviada' + (rend && rend.enviada ? ' ' + rend.enviada : ''), recibida: 'Recibida' + (rend && rend.recibida ? ' ' + rend.recibida : '') };
+    return `<div class="receipt" id="receipt">
+      <div class="title"><div><h2>Rendición del día</h2><div class="small muted">${esc(pr.nombre)} · ${fechaCorta(fecha)}</div></div><span class="pill ${estado === 'recibida' ? 'ok' : estado === 'abierta' ? 'warn' : 'info'}">${labels[estado]}</span></div>
+      <div class="small muted" style="margin-bottom:6px">${atendidos} atendidos · ${cobros.length} cobros${novino ? ` · ${novino} no vino` : ''}</div>
+      <div class="line"><span class="k">Efectivo</span><span class="v num">${fmt(t.efectivo)}</span></div>
+      <div class="line"><span class="k">Transferencias<small>a la cuenta del centro</small></span><span class="v num">${fmt(t.transferencia)}</span></div>
+      <div class="line"><span class="k">Débito y crédito</span><span class="v num">${fmt(t.debito + t.credito)}</span></div>
+      <div class="line"><span class="k">Señas MercadoPago<small>cobradas al reservar</small></span><span class="v num">${fmt(t.mp)}</span></div>
+      <div class="line"><span class="k">Órdenes de obra social<small>para liquidar a la obra social</small></span><span class="v num">${t.ordenes}</span></div>
+      <div class="big"><span class="k">Efectivo a entregar</span><span class="v">${fmt(t.efectivo)}</span></div>
+      <div class="big second"><span class="k muted">Cobrado por otros medios</span><span class="v muted">${fmt(otros)}</span></div>
+      <div class="big second" style="padding-top:0"><span class="k muted">Total del día</span><span class="v">${fmt(t.total)}</span></div>
+      <div class="timeline">${tl.map((s, i) => `<span class="st ${i < idx ? 'done' : i === idx ? 'now' : ''}">${labels[s]}</span>`).join('')}</div>
+      ${o.acciones || ''}
+    </div>`;
+  }
+  function cajaView() {
+    const p = S.ui.cajaProf; const pr = prof(p); const cobros = cobrosProfHoy(p); const ts = turnosProfHoy(p); const rend = rendicionHoy(p);
+    const estado = rend ? rend.estado : 'abierta';
+    const acc = [];
+    acc.push(`<button class="btn" data-action="print" title="Imprimir o guardar como PDF"><i class="ti ti-printer"></i>Imprimir</button>`);
+    if (estado === 'abierta') acc.push(`<button class="btn primary" data-action="rend-cerrar" data-id="${p}" ${cobros.length ? '' : 'disabled'}><i class="ti ti-lock"></i>Cerrar rendición</button>`);
+    if (estado === 'cerrada') acc.push(`<button class="btn primary" data-action="rend-enviar" data-id="${p}"><i class="ti ti-brand-whatsapp"></i>Enviar a ${esc(pr.corto)}</button>`);
+    if (estado === 'enviada') acc.push(`<button class="btn teal" data-action="rend-confirmar" data-id="${p}"><i class="ti ti-check"></i>Simular que ${esc(pr.corto)} confirma</button>`);
+    const acciones = `<div class="row mt no-print" style="justify-content:flex-end">${acc.join('')}</div>`;
+    const rows = cobros.slice().sort((a, b) => a.hora.localeCompare(b.hora)).map((c) => { const t = turno(c.turno); const pa = pac(c.dni); return `<tr><td class="num">${c.hora}</td><td>${linkPac(pa)}<span class="sub">turno ${t.hora} · ${esc(t.tipo)}</span></td><td>${chipsCobro(c)}</td><td class="amt" style="font-weight:500">${montoCobro(c)}</td><td class="actions"><button class="btn xs ghost" data-action="ver-cobro" data-id="${c.id}">Ver</button></td></tr>`; }).join('');
+    const pendientes = ts.filter((t) => ['llego', 'atencion', 'atendido'].includes(t.estado) && !cobroDe(t.id));
+    const body = `<div class="mb">${segProfesionales(p, 'seg-caja')}</div>
+      <div class="two">
+        <div>${receiptHTML(p, cobros, rend, ts, { acciones })}
+          ${estado !== 'abierta' ? `<div class="note mt">Rendición cerrada. Si entra un cobro después del cierre, queda en una rendición complementaria del mismo día.</div>` : ''}
+        </div>
+        <div class="stack">
+          ${pendientes.length ? `<div class="note warn"><i class="ti ti-alert-circle"></i> ${pendientes.length} turno${pendientes.length > 1 ? 's' : ''} sin cobro registrado: ${pendientes.map((t) => esc(pac(t.dni).apellido) + ' ' + t.hora).join(', ')}. <a href="#/agenda" data-action="ir-agenda" data-id="${p}">Ir a la agenda</a></div>` : ''}
+          <div class="panel tight"><div class="head"><h2>Cobros del día</h2><span class="small muted">${cobros.length} movimientos</span></div>
+          <div class="table-wrap"><table class="tbl"><thead><tr><th>Hora</th><th>Paciente</th><th>Medios</th><th class="amt">Importe</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="muted" style="padding:24px;text-align:center">Todavía no hay cobros para este profesional.</td></tr>'}</tbody></table></div></div>
+          <div class="note">Cada línea de cobro lleva su medio de pago, así la rendición separa el efectivo que se entrega al profesional de lo que ingresó por transferencia, tarjeta o seña. Las órdenes quedan contadas para la liquidación con la obra social.</div>
+        </div>
+      </div>`;
+    return shell('caja', 'Caja y rendición', `Cobros y rendición de hoy, ${fechaLarga(HOY)}`, body);
+  }
+  function cerrarRendicion(p) {
+    const pr = prof(p); const cobros = cobrosProfHoy(p); const t = totales(cobros);
+    openModal(`<div class="m-head"><div><h2>Cerrar la rendición de ${esc(pr.corto)}</h2><div class="small muted">${fechaCorta(HOY_KEY)} · ${cobros.length} cobros</div></div></div>
+      <div class="line" style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed var(--line)"><span>Efectivo a entregar</span><b class="num">${fmt(t.efectivo)}</b></div>
+      <div style="display:flex;justify-content:space-between;padding:8px 0"><span>Total del día</span><b class="num">${fmt(t.total)}</b></div>
+      <p class="small muted mt">Al cerrar, la rendición queda fija con fecha y hora, y se puede enviar al profesional para que confirme que la recibió.</p>
+      <div class="m-foot"><button class="btn" data-action="modal-close">Volver</button><button class="btn primary" data-action="rend-cerrar-ok" data-id="${p}"><i class="ti ti-lock"></i>Cerrar rendición</button></div>`);
+  }
+  function mensajeRendicion(p) {
+    const pr = prof(p); const t = totales(cobrosProfHoy(p));
+    return `Hola ${pr.nombre}, le dejamos la rendición de hoy ${fechaCorta(HOY_KEY)}:\n• Efectivo a retirar: ${fmt(t.efectivo)}\n• Transferencias: ${fmt(t.transferencia)}\n• Débito y crédito: ${fmt(t.debito + t.credito)}\n• Señas MercadoPago: ${fmt(t.mp)}\n• Órdenes de obra social: ${t.ordenes}\nTotal del día: ${fmt(t.total)}\n\nDetalle y confirmación: https://demo-cordis.potenta.ai/#/rendicion/${p}-${HOY_KEY}\nCordis`;
+  }
+  function enviarRendicion(p) {
+    const pr = prof(p);
+    openModal(`<div class="m-head"><div><h2>Enviar la rendición</h2><div class="small muted">Sale por WhatsApp al ${esc(pr.tel || 'número del profesional')} desde el número del centro</div></div><button class="btn sm ghost" data-action="modal-close" aria-label="Cerrar"><i class="ti ti-x"></i></button></div>
+      <div class="wa">${esc(mensajeRendicion(p))}<span class="t">${ahoraHM()} ✓✓</span></div>
+      <p class="tiny muted mt">El profesional abre el detalle y toca "Recibí". Si no responde, se le reenvía al día siguiente a las 9.</p>
+      <div class="m-foot"><button class="btn" data-action="modal-close">Cancelar</button><button class="btn primary" data-action="rend-enviar-ok" data-id="${p}"><i class="ti ti-send"></i>Enviar</button></div>`);
+  }
+
+  /* ---------- rendiciones (historial y mes) ---------- */
+  function rendicionesView() {
+    const mesKey = HOY_KEY.slice(0, 7); const mesNombre = MESES[HOY.getMonth()] + ' ' + HOY.getFullYear();
+    const delMes = S.rendiciones.filter((r) => r.fecha.startsWith(mesKey));
+    const porProf = {};
+    delMes.forEach((r) => { const t = totalesRend(r); const a = porProf[r.prof] || (porProf[r.prof] = { efectivo: 0, transferencia: 0, tarjetas: 0, mp: 0, total: 0, ordenes: 0, dias: 0, turnos: 0 }); a.efectivo += t.efectivo; a.transferencia += t.transferencia; a.tarjetas += t.debito + t.credito; a.mp += t.mp; a.total += t.total; a.ordenes += t.ordenes; a.dias++; a.turnos += r.turnos || 0; });
+    const tot = { efectivo: 0, transferencia: 0, tarjetas: 0, mp: 0, total: 0, ordenes: 0, turnos: 0 };
+    const rowsMes = Object.keys(porProf).map((p) => { const a = porProf[p]; Object.keys(tot).forEach((k) => tot[k] += a[k]); return `<tr><td class="name">${esc(prof(p).nombre)}<span class="sub">${a.dias} rendiciones · ${a.turnos} turnos</span></td><td class="amt">${fmt(a.efectivo)}</td><td class="amt">${fmt(a.transferencia)}</td><td class="amt">${fmt(a.tarjetas)}</td><td class="amt">${fmt(a.mp)}</td><td class="amt" style="font-weight:500">${fmt(a.total)}</td><td class="amt">${a.ordenes}</td></tr>`; }).join('');
+    const filtro = S.ui.rendProf || 'todos';
+    const ordenProf = (id) => PROFESIONALES.findIndex((p) => p.id === id);
+    const histAll = S.rendiciones.filter((r) => filtro === 'todos' || r.prof === filtro).sort((a, b) => b.fecha.localeCompare(a.fecha) || ordenProf(a.prof) - ordenProf(b.prof));
+    const hist = S.ui.histTodas ? histAll : histAll.slice(0, 12);
+    const rowsHist = hist.map((r) => { const t = totalesRend(r); return `<tr><td class="num">${fechaCorta(r.fecha)}</td><td>${esc(prof(r.prof).nombre)}</td><td class="num">${r.turnos}</td><td class="amt">${fmt(t.efectivo)}</td><td class="amt">${fmt(t.transferencia)}</td><td class="amt">${fmt(t.debito + t.credito)}</td><td class="amt">${fmt(t.mp)}</td><td class="amt" style="font-weight:500">${fmt(t.total)}</td><td><span class="pill ${r.estado === 'recibida' ? 'ok' : 'info'}">${r.estado === 'recibida' ? 'Recibida ' + r.recibida : r.estado === 'enviada' ? 'Enviada' : 'Cerrada'}</span></td><td class="actions"><button class="btn xs ghost" data-action="rend-ver" data-id="${r.id}">Ver</button></td></tr>`; }).join('');
+    const selProf = `<select class="input" style="width:auto" data-action="rend-filtro"><option value="todos">Todos los profesionales</option>${PROFESIONALES.map((p) => `<option value="${p.id}" ${filtro === p.id ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')}</select>`;
+    const body = `
+      <div class="panel tight mb"><div class="head"><div><h2>Resumen de ${mesNombre}</h2><div class="small muted">Suma de las rendiciones cerradas del mes, por profesional y medio de pago</div></div><button class="btn sm" data-action="export-csv"><i class="ti ti-download"></i>Exportar Excel</button></div>
+        <div class="table-wrap"><table class="tbl" id="tbl-mes"><thead><tr><th>Profesional</th><th class="amt">Efectivo</th><th class="amt">Transferencias</th><th class="amt">Tarjetas</th><th class="amt">Señas MP</th><th class="amt">Total</th><th class="amt">Órdenes</th></tr></thead>
+        <tbody>${rowsMes}<tr style="font-weight:500"><td>Total del centro<span class="sub" style="font-weight:400">${tot.turnos} turnos</span></td><td class="amt">${fmt(tot.efectivo)}</td><td class="amt">${fmt(tot.transferencia)}</td><td class="amt">${fmt(tot.tarjetas)}</td><td class="amt">${fmt(tot.mp)}</td><td class="amt">${fmt(tot.total)}</td><td class="amt">${tot.ordenes}</td></tr></tbody></table></div></div>
+      <div class="panel tight mb"><div class="head"><div><h2>Por obra social, ${mesNombre}</h2><div class="small muted">Turnos atendidos, copagos cobrados y órdenes para liquidar</div></div></div>
+        <div class="table-wrap"><table class="tbl"><thead><tr><th>Obra social</th><th class="amt">Turnos</th><th class="amt">Copagos cobrados</th><th class="amt">Órdenes a liquidar</th></tr></thead>
+        <tbody>${RESUMEN_OBRAS_MES.map((o) => `<tr><td>${esc(o.obra)}</td><td class="amt">${o.turnos}</td><td class="amt">${fmt(o.copagos)}</td><td class="amt">${o.ordenes || '—'}</td></tr>`).join('')}</tbody></table></div></div>
+      <div class="panel tight"><div class="head"><h2>Historial de rendiciones</h2>${selProf}</div>
+        <div class="table-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Profesional</th><th>Turnos</th><th class="amt">Efectivo</th><th class="amt">Transf.</th><th class="amt">Tarjetas</th><th class="amt">Señas</th><th class="amt">Total</th><th>Estado</th><th></th></tr></thead><tbody>${rowsHist}</tbody></table></div>${histAll.length > hist.length ? `<div style="padding:10px 18px;border-top:1px solid var(--line)"><button class="btn sm ghost" data-action="hist-todas">Mostrar las ${histAll.length} rendiciones</button></div>` : ''}</div>`;
+    return shell('rendiciones', 'Rendiciones', 'Lo que se le entregó a cada profesional, día por día, y el resumen del mes', body);
+  }
+  function verRendicion(id) {
+    const r = S.rendiciones.find((x) => x.id === id); const cobros = S.cobros.filter((c) => r.cobros.includes(c.id));
+    const html = receiptHTML(r.prof, r.totales ? [] : cobros, r, null, { fecha: r.fecha });
+    const fixed = r.totales ? html.replace(/<div class="line">[\s\S]*?<div class="timeline">/, (m) => {
+      const t = r.totales; return `<div class="line"><span class="k">Efectivo</span><span class="v num">${fmt(t.efectivo)}</span></div><div class="line"><span class="k">Transferencias</span><span class="v num">${fmt(t.transferencia)}</span></div><div class="line"><span class="k">Débito y crédito</span><span class="v num">${fmt(t.debito + t.credito)}</span></div><div class="line"><span class="k">Señas MercadoPago</span><span class="v num">${fmt(t.mp)}</span></div><div class="line"><span class="k">Órdenes de obra social</span><span class="v num">${t.ordenes}</span></div><div class="big"><span class="k">Efectivo a entregar</span><span class="v">${fmt(t.efectivo)}</span></div><div class="big second" style="padding-top:0"><span class="k muted">Total del día</span><span class="v">${fmt(t.total)}</span></div><div class="timeline">`; }) : html;
+    openModal(`<div class="m-head"><div></div><button class="btn sm ghost" data-action="modal-close" aria-label="Cerrar"><i class="ti ti-x"></i></button></div>${fixed}<div class="m-foot"><button class="btn" data-action="print"><i class="ti ti-printer"></i>Imprimir</button><button class="btn primary" data-action="modal-close">Cerrar</button></div>`);
+  }
+  function exportCSV() {
+    const rows = [...document.querySelectorAll('#tbl-mes tr')].map((tr) => [...tr.children].map((td) => '"' + td.textContent.trim().replace(/\s+/g, ' ').replace(/"/g, '""') + '"').join(';'));
+    const blob = new Blob(['﻿' + rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `rendiciones-${HOY_KEY.slice(0, 7)}.csv`; a.click();
+    toast('Resumen exportado', 'Se descargó el archivo para el contador.');
+  }
+
+  /* ---------- pacientes ---------- */
+  function pacientesView() {
+    const q = (S.ui.q || '').trim().toLowerCase();
+    const lista = PACIENTES.filter((p) => !q || p.dni.includes(q.replace(/\./g, '')) || nombrePac(p).toLowerCase().includes(q) || p.telefonos.some((t) => t.num.replace(/\s/g, '').includes(q.replace(/\s/g, ''))))
+      .sort((a, b) => a.apellido.localeCompare(b.apellido));
+    const ultimo = (dni) => { const t = S.turnos.filter((x) => x.dni === dni).sort((a, b) => a.hora.localeCompare(b.hora))[0]; return t ? `hoy ${t.hora} · ${prof(t.prof).corto}` : '—'; };
+    const rows = lista.map((p) => `<tr><td class="num">${dniFmt(p.dni)}</td><td>${linkPac(p)}${p.origen !== 'importado' ? ' <span class="pill solicitado" style="font-size:11px">Nuevo</span>' : ''}</td><td class="num">${edad(p.nac)}</td><td>${esc(obra(p.obra).nombre)}</td><td class="small">${p.telefonos.map((t) => `${t.num}${t.propio ? '' : ' <span class="muted">(' + esc(t.titular) + ')</span>'}`).join('<br>')}</td><td class="small muted">${ultimo(p.dni)}</td><td class="actions"><a class="btn xs" href="#/pacientes/${p.dni}">Abrir</a></td></tr>`).join('');
+    const body = `<div class="panel tight">
+      <div class="head"><div class="search"><i class="ti ti-search"></i><input id="q" placeholder="Buscar por DNI, apellido o teléfono" value="${esc(S.ui.q || '')}" data-action="buscar"></div><span class="small muted">${lista.length} de ${PACIENTES.length} pacientes · 12.438 en la base completa</span></div>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>DNI</th><th>Paciente</th><th>Edad</th><th>Obra social</th><th>WhatsApp</th><th>Último turno</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="7" class="muted" style="padding:24px;text-align:center">No hay pacientes con ese dato. Si escribe por WhatsApp, el asistente le pide el DNI y crea la ficha.</td></tr>`}</tbody></table></div></div>`;
+    return shell('pacientes', 'Pacientes', 'Una ficha por DNI. Los teléfonos de WhatsApp se vinculan a la ficha, aunque un mismo número reserve para varias personas.', body);
+  }
+  function pacienteView(dni, tab) {
+    const p = pac(dni); if (!p) return shell('pacientes', 'Paciente', '', `<div class="panel">No existe un paciente con DNI ${esc(dni)}.</div>`);
+    const o = obra(p.obra); const clinico = S.rol !== 'recepcion';
+    tab = tab || 'ficha';
+    if (tab === 'historia' && clinico) { const k = HOY_KEY + ' ' + ahoraHM(); if (!S.accesos.some((a) => a.dni === dni && a.cuando === k)) { S.accesos.push({ dni, quien: S.rol === 'medico' ? 'Dra. Méndez' : ROLES[S.rol].nombre, cuando: k }); save(); } }
+    const tabs = [['ficha', 'Ficha'], ['turnos', 'Turnos'], ['cobros', 'Cobros'], ['historia', 'Historia clínica', !clinico], ['estudios', 'Estudios e informes']];
+    const tabsHTML = `<div class="tabs">${tabs.map(([id, l, lock]) => `<a href="#/pacientes/${dni}/${id}" class="${tab === id ? 'on' : ''}${lock ? ' lock' : ''}">${lock ? '<i class="ti ti-lock" style="font-size:12px"></i> ' : ''}${l}</a>`).join('')}</div>`;
+    let cuerpo = '';
+    if (tab === 'ficha') cuerpo = fichaTab(p, o);
+    if (tab === 'turnos') cuerpo = turnosTab(p);
+    if (tab === 'cobros') cuerpo = cobrosTab(p);
+    if (tab === 'historia') cuerpo = clinico ? historiaTab(p) : `<div class="lock-box"><i class="ti ti-lock"></i>La historia clínica solo la ven los profesionales. Recepción ve la ficha, los turnos, los cobros y el estado de los estudios.</div>`;
+    if (tab === 'estudios') cuerpo = estudiosTab(p, clinico);
+    const head = `<div class="panel"><div class="pt-head"><div><h1 style="font-size:20px">${esc(nombrePac(p))}</h1>
+        <div class="meta"><span><b>DNI</b>${dniFmt(p.dni)}</span><span><b>Edad</b>${edad(p.nac)} años (${fechaCorta(p.nac)})</span><span><b>Obra social</b>${esc(o.nombre)}${p.afiliado ? ' · ' + esc(p.afiliado) : ''}</span><span><b>Origen de la ficha</b>${p.origen === 'importado' ? 'Importada del sistema anterior' : p.origen === 'whatsapp' ? 'Creada por el asistente de WhatsApp' : 'Reserva web'}</span></div>
+        ${p.nota ? `<div class="note mt" style="display:inline-block">${esc(p.nota)}</div>` : ''}</div>
+        <div class="row"><button class="btn sm" data-action="ver-conv" data-id="${p.dni}"><i class="ti ti-brand-whatsapp"></i>Ver conversación</button><button class="btn sm" data-action="nuevo-turno"><i class="ti ti-calendar-plus"></i>Dar turno</button></div></div>
+      ${tabsHTML}${cuerpo}</div>`;
+    return shell('pacientes', 'Pacientes', '', head);
+  }
+  function fichaTab(p, o) {
+    const tel = p.telefonos.map((t) => `<tr><td class="num nowrap">${t.num}</td><td>${t.propio ? 'Propio' : esc(t.titular)}</td><td class="small muted">${t.propio ? 'Recibe recordatorios y avisos' : 'Reserva y recibe los avisos por esta persona'}</td></tr>`).join('');
+    const otros = PACIENTES.filter((x) => x.dni !== p.dni && x.telefonos.some((t) => p.telefonos.some((u) => u.num === t.num)));
+    return `<div class="two" style="grid-template-columns:1fr 1fr">
+      <div class="panel"><h3>Teléfonos de WhatsApp vinculados</h3><table class="tbl mt"><thead><tr><th>Número</th><th>De quién es</th><th></th></tr></thead><tbody>${tel}</tbody></table>
+        ${otros.length ? `<div class="note mt">Este número también está vinculado a: ${otros.map((x) => `<a href="#/pacientes/${x.dni}">${esc(nombrePac(x))}</a>`).join(', ')}. Cuando escriben, el asistente pregunta para quién es el turno y pide el DNI.</div>` : ''}
+        <button class="btn sm mt" data-action="agregar-tel"><i class="ti ti-plus"></i>Vincular otro número</button></div>
+      <div class="panel"><h3>Datos</h3><div class="stack mt small">
+        <div class="row between"><span class="muted">Obra social</span><span>${esc(o.nombre)}${p.afiliado ? ' · ' + esc(p.afiliado) : ''}</span></div>
+        <div class="row between"><span class="muted">Copago consulta</span><span class="num">${o.copago ? fmt(o.copago) : 'Sin copago'}${o.orden ? ' · con orden' : ''}</span></div>
+        <div class="row between"><span class="muted">Fecha de nacimiento</span><span class="num">${fechaCorta(p.nac)}</span></div>
+        <div class="row between"><span class="muted">Última visita</span><span>${(() => { const t = S.turnos.filter((x) => x.dni === p.dni && x.estado === 'atendido')[0]; return t ? `hoy ${t.hora}, ${prof(t.prof).corto}` : 'Ver turnos'; })()}</span></div>
+        <div class="row between"><span class="muted">Recordatorio de control</span><span>Automático a los 6 meses de la última consulta</span></div></div>
+        <button class="btn sm mt" data-action="editar-ficha"><i class="ti ti-edit"></i>Editar datos</button></div></div>`;
+  }
+  function turnosTab(p) {
+    const ts = S.turnos.filter((t) => t.dni === p.dni).sort((a, b) => a.hora.localeCompare(b.hora));
+    const prev = [['2026-04-08', 'Dra. Méndez', 'Consulta', 'Atendido'], ['2025-09-30', 'Dr. Ruiz', 'Consulta', 'Atendido'], ['2025-03-12', 'Ergometría', 'Ergometría', 'Atendido'], ['2024-05-21', 'Dra. Méndez', 'Consulta', 'Atendido']];
+    const rows = ts.map((t) => `<tr><td class="num">Hoy ${t.hora}</td><td>${esc(prof(t.prof).corto)}</td><td>${esc(t.tipo)}</td><td>${pill(t.estado)}</td><td class="small muted">${ORIGEN[t.origen][1]}</td></tr>`).join('')
+      + (p.origen === 'importado' ? prev.map((r) => `<tr class="dim"><td class="num">${fechaCorta(r[0])}</td><td>${r[1]}</td><td>${r[2]}</td><td><span class="pill atendido">${r[3]}</span></td><td class="small muted">Importado del sistema anterior</td></tr>`).join('') : '');
+    return `<div class="panel tight"><div class="head"><h3>Turnos</h3><span class="small muted">Historial completo, incluido lo importado</span></div><div class="table-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Profesional</th><th>Tipo</th><th>Estado</th><th>Origen</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="muted" style="padding:20px;text-align:center">Sin turnos.</td></tr>'}</tbody></table></div></div>`;
+  }
+  function cobrosTab(p) {
+    const cs = S.cobros.filter((c) => c.dni === p.dni);
+    const rows = cs.map((c) => `<tr><td class="num">${fechaCorta(c.fecha)} ${c.hora}</td><td>${esc(prof(c.prof).corto)}</td><td>${chipsCobro(c)}</td><td class="amt" style="font-weight:500">${montoCobro(c)}</td><td class="actions"><button class="btn xs ghost" data-action="ver-cobro" data-id="${c.id}">Ver</button></td></tr>`).join('');
+    return `<div class="panel tight"><div class="head"><h3>Cobros</h3></div><div class="table-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Profesional</th><th>Medios</th><th class="amt">Importe</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="muted" style="padding:20px;text-align:center">Sin cobros registrados.</td></tr>'}</tbody></table></div></div>`;
+  }
+  function historiaTab(p) {
+    const evs = S.evoluciones.filter((e) => e.dni === p.dni).sort((a, b) => b.fecha.localeCompare(a.fecha) || (b.hora || '').localeCompare(a.hora || ''));
+    const acc = S.accesos.filter((a) => a.dni === p.dni).slice(-4).reverse();
+    const lista = evs.map((e) => `<div class="evo"><div class="when"><b>${fechaMedia(e.fecha)}</b>${e.hora || ''}<br>${esc(prof(e.prof).corto)}</div><div><div class="txt">${esc(e.texto)}</div><div class="by"><span class="pill ok" style="font-size:11px"><i class="ti ti-signature"></i> Firmada</span>${e.importada ? '<span class="pill" style="font-size:11px">Importada del sistema anterior</span>' : ''}<button class="btn xs ghost" data-action="evo-editar" title="Las evoluciones firmadas no se modifican">Editar</button></div></div></div>`).join('');
+    const puede = S.rol === 'medico';
+    return `<div class="two" style="grid-template-columns:minmax(0,1fr) 320px">
+      <div class="panel"><div class="row between"><h3>Evoluciones</h3><span class="small muted">${evs.length} registros</span></div>
+        ${lista || '<p class="muted mt">Sin evoluciones todavía.</p>'}
+        ${puede ? `<div class="mt-lg"><h3>Nueva evolución</h3><div class="field mt"><textarea class="input" id="evo-txt" placeholder="Escribí la evolución de hoy. Al guardar queda firmada por vos con fecha y hora."></textarea></div><div id="evo-err" class="tiny" style="color:var(--red);min-height:16px"></div><div class="row"><button class="btn primary" data-action="evo-save" data-id="${p.dni}"><i class="ti ti-signature"></i>Guardar y firmar</button><button class="btn" data-action="adjuntar"><i class="ti ti-paperclip"></i>Adjuntar archivo</button></div></div>` : `<div class="note mt">Dirección ve la historia en modo lectura. Las evoluciones las escriben y firman los profesionales.</div>`}
+      </div>
+      <div class="stack"><div class="panel"><h3>Antecedentes</h3><div class="small mt stack" style="gap:6px"><div><b class="muted" style="font-weight:500">Alergias</b><br>Sin alergias conocidas</div><div><b class="muted" style="font-weight:500">Medicación habitual</b><br>${p.dni === '10234567' ? 'Enalapril 10 mg c/12 h · Atorvastatina 10 mg' : p.dni === '12345678' ? 'AAS 100 mg · Clopidogrel 75 mg · Rosuvastatina 20 mg' : 'No registra'}</div><div><b class="muted" style="font-weight:500">Antecedentes</b><br>${p.dni === '10234567' ? 'HTA desde 2019. Dislipemia.' : p.dni === '12345678' ? 'Angioplastia con stent (2023). Tabaquismo suspendido.' : 'Sin antecedentes cardiovasculares registrados'}</div></div><button class="btn xs mt" data-action="editar-ficha">Editar antecedentes</button></div>
+        <div class="panel"><h3>Accesos a esta historia</h3><div class="small mt stack" style="gap:4px">${acc.map((a) => `<div><span class="muted num">${fechaCorta(a.cuando.slice(0, 10)).slice(0, 5)} ${a.cuando.slice(11)}</span> · ${esc(a.quien)}</div>`).join('') || '<span class="muted">Sin accesos registrados</span>'}</div><p class="tiny muted mt">Cada apertura queda registrada. Las evoluciones no se editan ni se borran: la ley exige integridad e inalterabilidad de la historia clínica.</p></div></div></div>`;
+  }
+  function estudiosTab(p, clinico) {
+    const es = S.estudios.filter((e) => e.dni === p.dni).sort((a, b) => b.fecha.localeCompare(a.fecha));
+    const est = { realizado: ['warn', 'Realizado, sin informar'], informado: ['info', 'Informado'], enviado: ['ok', 'Enviado al paciente'] };
+    const rows = es.map((e) => { const a = []; if (clinico && e.estado === 'realizado') a.push(btn('est-informar', e.id, 'Informar', 'primary')); if (clinico && e.estado === 'informado') a.push(btn('est-enviar', e.id, 'Enviar al paciente', 'primary')); if (e.estado === 'enviado') a.push(btn('est-enviar', e.id, 'Reenviar')); if (clinico && e.estado !== 'realizado') a.push(btn('est-ver', e.id, 'Ver informe')); if (!clinico && e.estado === 'enviado') a.push(`<span class="small muted">El paciente lo tiene en su WhatsApp</span>`); return `<tr><td class="num">${e.fecha === HOY_KEY ? 'Hoy' : fechaCorta(e.fecha)}</td><td class="name">${esc(e.tipo)}<span class="sub">${esc(prof(e.prof).corto)} · ${esc(e.archivo)}</span></td><td><span class="pill ${est[e.estado][0]}">${est[e.estado][1]}</span>${e.enviado ? `<span class="sub">${esc(e.enviado)}</span>` : ''}</td><td class="actions">${a.join(' ')}</td></tr>`; }).join('');
+    return `<div class="panel tight"><div class="head"><div><h3>Estudios e informes</h3><div class="small muted">${clinico ? 'El técnico sube el trazado, el profesional informa y el paciente lo recibe por WhatsApp' : 'Si un paciente pregunta si su estudio está listo, acá está la respuesta'}</div></div>${clinico ? `<button class="btn sm" data-action="est-subir" data-id="${p.dni}"><i class="ti ti-upload"></i>Subir estudio</button>` : ''}</div>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Estudio</th><th>Estado</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted" style="padding:20px;text-align:center">Sin estudios.</td></tr>'}</tbody></table></div></div>`;
+  }
+  function guardarEvolucion(dni) {
+    const txt = ($('#evo-txt').value || '').trim(); const err = $('#evo-err');
+    if (txt.length < 10) { err.textContent = 'Escribí la evolución antes de firmar.'; return; }
+    S.evoluciones.push({ id: uid('e'), dni, prof: 'pm', fecha: HOY_KEY, hora: ahoraHM(), texto: txt, importada: false }); save(); render();
+    toast('Evolución firmada', 'Quedó registrada con fecha y hora. No se puede modificar.');
+  }
+
+  /* ---------- informes (médico) ---------- */
+  function informesView() {
+    const pend = S.estudios.filter((e) => e.estado === 'realizado'); const sinEnviar = S.estudios.filter((e) => e.estado === 'informado');
+    const row = (e, acc) => { const p = pac(e.dni); return `<tr><td class="num">${e.fecha === HOY_KEY ? 'Hoy' : fechaCorta(e.fecha)}</td><td>${linkPac(p, 'estudios')}<span class="sub">DNI ${dniFmt(p.dni)} · ${esc(obra(p.obra).nombre)}</span></td><td>${esc(e.tipo)}<span class="sub">${esc(e.archivo)}</span></td><td class="actions">${acc}</td></tr>`; };
+    const body = `<div class="panel tight mb"><div class="head"><div><h2>Para informar</h2><div class="small muted">Estudios realizados que esperan el informe</div></div><span class="pill warn">${pend.length} pendientes</span></div>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Paciente</th><th>Estudio</th><th></th></tr></thead><tbody>${pend.map((e) => row(e, btn('est-informar', e.id, 'Informar', 'primary'))).join('') || '<tr><td colspan="4" class="muted" style="padding:20px;text-align:center">Nada pendiente.</td></tr>'}</tbody></table></div></div>
+      <div class="panel tight"><div class="head"><div><h2>Informados, sin enviar</h2><div class="small muted">Listos para que el paciente los reciba por WhatsApp</div></div></div>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Paciente</th><th>Estudio</th><th></th></tr></thead><tbody>${sinEnviar.map((e) => row(e, btn('est-ver', e.id, 'Ver') + ' ' + btn('est-enviar', e.id, 'Enviar al paciente', 'primary'))).join('') || '<tr><td colspan="4" class="muted" style="padding:20px;text-align:center">Todo enviado.</td></tr>'}</tbody></table></div></div>`;
+    return shell('informes', 'Informes', 'Lo que falta informar y lo que falta mandar', body);
+  }
+  const PLANTILLAS = { 'Ergometría': 'Prueba ergométrica graduada en cinta, protocolo de Bruce. Alcanza [ ] METs, [ ]% de la frecuencia cardíaca máxima teórica. Sin cambios del segmento ST. Respuesta tensional normal. Sin arritmias.\nConclusión: ', 'Ecocardiograma Doppler': 'Dimensiones de cavidades conservadas. Función sistólica del VI conservada, FEy [ ]%. Válvulas sin alteraciones significativas. Sin derrame pericárdico.\nConclusión: ' };
+  function informar(id) {
+    const e = S.estudios.find((x) => x.id === id); const p = pac(e.dni);
+    openModal(`<div class="m-head"><div><h2>Informar ${esc(e.tipo)}</h2><div class="small muted">${esc(nombrePac(p))} · DNI ${dniFmt(p.dni)} · ${e.fecha === HOY_KEY ? 'hoy' : fechaCorta(e.fecha)} · ${esc(e.archivo)}</div></div><button class="btn sm ghost" data-action="modal-close" aria-label="Cerrar"><i class="ti ti-x"></i></button></div>
+      <div class="field"><label>Informe</label><textarea class="input" id="inf-txt" style="min-height:170px">${esc(PLANTILLAS[e.tipo] || '')}</textarea></div>
+      <div id="inf-err" class="tiny" style="color:var(--red);min-height:16px"></div>
+      <div class="m-foot"><button class="btn" data-action="modal-close">Cancelar</button><button class="btn primary" data-action="est-informar-ok" data-id="${e.id}"><i class="ti ti-signature"></i>Firmar informe</button></div>`, true);
+  }
+  function mensajeEstudio(e, p) { return `Hola ${p.nombre}, el informe de tu ${e.tipo.toLowerCase()} ya está listo. Lo podés ver y descargar acá:\nhttps://demo-cordis.potenta.ai/#/portal/${e.token}\nIngresá con tu DNI sin puntos. Si tenés dudas, respondé este mensaje.\nCordis`; }
+  function enviarEstudio(id) {
+    const e = S.estudios.find((x) => x.id === id); const p = pac(e.dni); if (!e.token) { e.token = uid('').slice(0, 6); save(); }
+    const tel = p.telefonos[0];
+    openModal(`<div class="m-head"><div><h2>Enviar el informe al paciente</h2><div class="small muted">Por WhatsApp al ${tel.num}${tel.propio ? '' : ' (' + esc(tel.titular) + ')'} desde el número del centro</div></div><button class="btn sm ghost" data-action="modal-close" aria-label="Cerrar"><i class="ti ti-x"></i></button></div>
+      <div class="wa">${esc(mensajeEstudio(e, p))}<span class="t">${ahoraHM()} ✓✓</span></div>
+      <p class="tiny muted mt">El enlace es personal y pide el DNI del paciente. Queda en la conversación, así lo encuentra cuando lo necesite.</p>
+      <div class="m-foot"><button class="btn" data-action="modal-close">Cancelar</button><button class="btn primary" data-action="est-enviar-ok" data-id="${e.id}"><i class="ti ti-send"></i>Enviar</button></div>`);
+  }
+  function reportHTML(e, p) {
+    return `<div class="report"><h2>Informe de ${esc(e.tipo)}</h2>
+      <div class="grid"><div><b>Paciente</b>${esc(p.nombre + ' ' + p.apellido)}</div><div><b>DNI</b>${dniFmt(p.dni)}</div><div><b>Fecha del estudio</b>${fechaCorta(e.fecha)}</div><div><b>Obra social</b>${esc(obra(p.obra).nombre)}</div><div><b>Realizado en</b>Cordis · Salta</div><div><b>Informa</b>${esc(prof(e.prof).estudio ? 'Dra. Laura Méndez' : prof(e.prof).nombre)}</div></div>
+      <div class="sec"><h4>Informe</h4><div style="white-space:pre-wrap;line-height:1.6">${esc(e.informe || '')}</div></div>
+      <div class="sig">Firmado digitalmente ${e.firmado || fechaCorta(e.fecha)} · Cordis · Este informe se entrega al paciente a su pedido.</div></div>`;
+  }
+  function verInforme(id) { const e = S.estudios.find((x) => x.id === id); const p = pac(e.dni); openModal(`<div class="m-head"><div></div><button class="btn sm ghost" data-action="modal-close" aria-label="Cerrar"><i class="ti ti-x"></i></button></div>${reportHTML(e, p)}<div class="m-foot"><button class="btn" data-action="print"><i class="ti ti-printer"></i>Imprimir</button><button class="btn primary" data-action="modal-close">Cerrar</button></div>`, true); }
+
+  /* ---------- portal del paciente ---------- */
+  function portalView(token) {
+    const e = S.estudios.find((x) => x.token === token);
+    const okDni = S.ui.portalOk === token;
+    let box;
+    if (!e) box = `<div class="box"><h2>Este enlace no es válido</h2><p class="muted mt">Puede haber vencido. Escribinos por WhatsApp y te lo mandamos de nuevo.</p></div>`;
+    else if (!okDni) box = `<div class="box"><h2>Tu informe está listo</h2><p class="muted mt">Para verlo, ingresá tu número de documento sin puntos.</p>
+      <div class="field mt"><label>DNI</label><input class="input" id="portal-dni" inputmode="numeric" placeholder="Por ejemplo, 12345678" style="font-size:18px;letter-spacing:1px"></div>
+      <div id="portal-err" class="tiny mt" style="color:var(--red);min-height:16px"></div>
+      <div class="row mt"><button class="btn primary" data-action="portal-ok" data-id="${token}"><i class="ti ti-lock-open"></i>Ver informe</button></div>
+      <p class="tiny faint mt-lg">El enlace es personal. Si no sos la persona del estudio, cerrá esta página.</p></div>`;
+    else { const p = pac(e.dni); const wa = 'https://wa.me/?text=' + encodeURIComponent(`Informe de ${e.tipo} · ${p.nombre} ${p.apellido} · ${fechaCorta(e.fecha)}: https://demo-cordis.potenta.ai/#/portal/${token}`); box = `<div class="box">${reportHTML(e, p)}<div class="row mt-lg no-print"><button class="btn primary" data-action="print"><i class="ti ti-download"></i>Descargar PDF</button><a class="btn" href="${wa}" target="_blank" rel="noopener"><i class="ti ti-brand-whatsapp"></i>Compartir por WhatsApp</a><button class="btn ghost" data-action="portal-salir" data-id="${token}">Salir</button></div></div>`; }
+    return `<div class="portal"><div class="brand"><div class="mark">${logo()}</div><div><b>Cordis</b><span>Centro de cardiología · Salta</span></div></div>${box}<p class="tiny faint mt-lg">Prototipo con datos ficticios · Potenta AI</p></div>`;
+  }
+
+  /* ---------- importación y configuración ---------- */
+  function importacionView() {
+    const body = `<div class="kpis mb"><div class="kpi"><div class="l">Pacientes importados</div><div class="v">12.438</div><div class="d">desde 2010</div></div><div class="kpi"><div class="l">Vinculados por DNI</div><div class="v">11.902</div><div class="d">95,7 % sin intervención</div></div><div class="kpi"><div class="l">Evoluciones</div><div class="v">48.210</div><div class="d">firmadas como importadas</div></div><div class="kpi"><div class="l">Archivos</div><div class="v">9.874</div><div class="d">estudios e informes, 6,1 GB</div></div><div class="kpi"><div class="l">A revisar</div><div class="v">536</div><div class="d">fichas con dudas</div></div></div>
+      <div class="panel mb"><div class="row between"><h2>Cruce por DNI</h2><span class="small muted">Última corrida: ayer 23:10 · próxima: cuando ICOM entregue el export final</span></div><div class="bar mt"><span style="width:95.7%"></span></div><div class="small muted mt">Cada ficha del sistema anterior se busca por DNI. Si coincide, se unen el historial, los turnos y los archivos. Si hay dudas, queda en la lista de abajo y nada se pierde.</div></div>
+      <div class="panel tight"><div class="head"><div><h2>Fichas a revisar</h2><div class="small muted">Ejemplos de los casos que no cierran solos</div></div><button class="btn sm" data-action="descargar-lista"><i class="ti ti-download"></i>Descargar lista completa</button></div>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>DNI</th><th>Ficha anterior</th><th>Motivo</th><th>Qué se hace</th></tr></thead><tbody>${IMPORT_REVISAR.map((r) => `<tr><td class="num">${esc(r.dni)}</td><td>${esc(r.nombre)}</td><td class="small">${esc(r.motivo)}</td><td class="small muted">${esc(r.accion)}</td></tr>`).join('')}</tbody></table></div></div>`;
+    return shell('importacion', 'Importación del sistema anterior', 'Historias clínicas, turnos y archivos de ICOM, cruzados por DNI con las fichas nuevas', body);
+  }
+  function configView() {
+    const profs = PROFESIONALES.map((p) => `<tr><td class="name">${esc(p.nombre)}<span class="sub">${esc(p.esp)}</span></td><td class="num">${p.dur} min</td><td><span class="pill ok">Sincronizada</span></td><td>${p.gcal ? '<span class="pill info">Google Calendar</span>' : '<span class="muted small">—</span>'}</td><td class="num small">${esc(p.tel || '—')}</td><td class="actions"><button class="btn xs ghost" data-action="editar">Editar</button></td></tr>`).join('');
+    const obras = OBRAS.map((o) => `<tr><td>${esc(o.nombre)}</td><td class="amt">${o.id === 'part' ? fmt(o.copago) : o.copago ? fmt(o.copago) : 'Sin copago'}</td><td class="amt">${o.id === 'part' ? fmt(o.copagoEstudio) : o.copagoEstudio ? fmt(o.copagoEstudio) : 'Sin copago'}</td><td>${o.orden ? 'Sí' : 'No'}</td><td class="actions"><button class="btn xs ghost" data-action="editar">Editar</button></td></tr>`).join('');
+    const cupos = CUPOS.map((c) => `<tr><td>${esc(prof(c.prof).nombre)}</td><td>${esc(obra(c.obra).nombre)}</td><td>${c.dia}</td><td class="num">${c.cupos}</td><td class="small">${c.libera}</td><td class="num">${c.usados} de ${c.cupos}</td></tr>`).join('');
+    const users = USUARIOS.map((u) => `<tr><td class="name">${esc(u.nombre)}</td><td>${u.rol}</td><td class="small muted">${esc(u.acceso)}</td></tr>`).join('');
+    const body = `<div class="stack" style="gap:16px">
+      <div class="panel tight"><div class="head"><div><h2>Profesionales y agendas</h2><div class="small muted">Cada agenda está sincronizada con el sistema de atención: lo que reserva el asistente aparece acá, y lo que se bloquea acá deja de ofrecerse</div></div><button class="btn sm" data-action="editar"><i class="ti ti-plus"></i>Agregar profesional</button></div><div class="table-wrap"><table class="tbl"><thead><tr><th>Profesional</th><th>Turno</th><th>Agenda</th><th>Bloqueos</th><th>WhatsApp</th><th></th></tr></thead><tbody>${profs}</tbody></table></div></div>
+      <div class="panel tight"><div class="head"><div><h2>Obras sociales y copagos</h2><div class="small muted">Lo que el asistente informa y lo que recepción ve sugerido al cobrar. Se actualiza cuando cambian los aranceles.</div></div></div><div class="table-wrap"><table class="tbl"><thead><tr><th>Obra social</th><th class="amt">Consulta</th><th class="amt">Estudio</th><th>Pide orden</th><th></th></tr></thead><tbody>${obras}</tbody></table></div></div>
+      <div class="panel tight"><div class="head"><div><h2>Cupos por obra social</h2><div class="small muted">Reglas que el asistente respeta al ofrecer turnos. Cuando se acaban, ofrece particular o el mes siguiente.</div></div><button class="btn sm" data-action="editar"><i class="ti ti-plus"></i>Agregar regla</button></div><div class="table-wrap"><table class="tbl"><thead><tr><th>Profesional</th><th>Obra social</th><th>Días</th><th>Cupos</th><th>Se liberan</th><th>Este mes</th></tr></thead><tbody>${cupos}</tbody></table></div></div>
+      <div class="panel tight"><div class="head"><div><h2>Usuarios y permisos</h2><div class="small muted">Lo clínico solo lo ven los profesionales. Todo acceso queda registrado.</div></div><button class="btn sm" data-action="editar"><i class="ti ti-plus"></i>Agregar usuario</button></div><div class="table-wrap"><table class="tbl"><thead><tr><th>Usuario</th><th>Rol</th><th>Acceso</th></tr></thead><tbody>${users}</tbody></table></div></div></div>`;
+    return shell('config', 'Configuración', 'Profesionales, aranceles, cupos y usuarios', body);
+  }
+
+  /* ---------- router ---------- */
+  function route() { const h = location.hash.replace(/^#\/?/, ''); const parts = h.split('/').filter(Boolean); return { name: parts[0] || '', parts }; }
+  function render() {
+    const r = route(); const app = $('#app'); closeModal();
+    if (r.name === 'portal') { app.innerHTML = portalView(r.parts[1] || ''); window.scrollTo(0, 0); return; }
+    if (!S.rol) { app.innerHTML = loginView(); return; }
+    if (r.name === 'rendicion') { location.hash = '#/rendiciones'; return; }
+    const allowed = navItems().map((x) => x[0]);
+    let name = r.name || 'agenda'; if (!allowed.includes(name)) name = 'agenda';
+    let html = '';
+    if (name === 'agenda') html = agendaView();
+    else if (name === 'caja') html = cajaView();
+    else if (name === 'rendiciones') html = rendicionesView();
+    else if (name === 'pacientes') html = r.parts[1] ? pacienteView(r.parts[1], r.parts[2]) : pacientesView();
+    else if (name === 'informes') html = informesView();
+    else if (name === 'importacion') html = importacionView();
+    else if (name === 'config') html = configView();
+    app.innerHTML = html;
+    if (name === 'pacientes' && !r.parts[1]) { const q = $('#q'); if (q && S.ui.qFocus) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
+    window.scrollTo(0, 0);
+  }
+
+  /* ---------- acciones ---------- */
+  document.addEventListener('click', (ev) => {
+    const el = ev.target.closest('[data-action]'); if (!el) return;
+    const a = el.dataset.action; const id = el.dataset.id;
+    if (a === 'modal-bg') { if (ev.target === el) closeModal(); return; }
+    if (a === 'modal-close') { closeModal(); return; }
+    if (a === 'login') { S.rol = el.dataset.rol; save(); location.hash = '#/agenda'; render(); return; }
+    if (a === 'logout') { S.rol = null; save(); render(); return; }
+    if (a === 'reset') { localStorage.removeItem(KEY); S = seed(); S.rol = null; render(); toast('Demo reiniciada', 'Los datos volvieron al estado inicial.'); return; }
+    if (a === 'seg-prof') { S.ui.prof = id; save(); render(); return; }
+    if (a === 'seg-caja') { S.ui.cajaProf = id; save(); render(); return; }
+    if (a === 'ir-agenda') { S.ui.prof = id; save(); return; }
+    if (a === 'llego') { const t = turno(id); t.estado = 'llego'; t.llego = ahoraHM(); save(); render(); toast('Llegada registrada', `${pac(t.dni).nombre} ${pac(t.dni).apellido} entra en la lista de espera. El sistema de atención lo marca como presente.`); return; }
+    if (a === 'entro') { const t = turno(id); t.estado = 'atencion'; t.entro = ahoraHM(); save(); render(); return; }
+    if (a === 'atendido') { const t = turno(id); t.estado = 'atendido'; t.salio = ahoraHM(); save(); render(); toast('Turno atendido', 'Se sincroniza con el sistema de atención: sale la encuesta y queda programado el recordatorio de control.'); return; }
+    if (a === 'novino') { const t = turno(id); t.estado = 'novino'; save(); render(); toast('Marcado como no vino', 'El sistema de atención le escribe en 3 días para ofrecerle un turno nuevo.'); return; }
+    if (a === 'reprogramar') { toast('Reprogramar', 'Abre el calendario del profesional con los horarios libres; el paciente recibe la confirmación por WhatsApp.'); return; }
+    if (a === 'nuevo-turno' || a === 'bloquear') { toast(a === 'bloquear' ? 'Bloquear horario' : 'Agregar turno', 'Se hace sobre la misma agenda que usa el asistente: el horario deja de ofrecerse al instante.'); return; }
+    if (a === 'cobrar') { abrirCobro(id); return; }
+    if (a === 'ver-cobro') { verCobro(id); return; }
+    if (a === 'anular-cobro') { S.cobros = S.cobros.filter((c) => c.id !== id); save(); closeModal(); render(); toast('Cobro anulado', 'Quedó registrado el movimiento de anulación.'); return; }
+    if (a === 'cobro-add') { COBRO.lineas = leerLineas(); COBRO.lineas.push({ medio: 'transferencia', importe: 0, ref: '' }); $('#lineas').innerHTML = COBRO.lineas.map(lineaHTML).join(''); return; }
+    if (a === 'cobro-del') { COBRO.lineas = leerLineas(); COBRO.lineas.splice(Number(el.dataset.i), 1); $('#lineas').innerHTML = COBRO.lineas.map(lineaHTML).join(''); $('#cobro-total').textContent = fmt(totales([COBRO]).total); return; }
+    if (a === 'cobro-save') { guardarCobro(); return; }
+    if (a === 'rend-cerrar') { cerrarRendicion(id); return; }
+    if (a === 'rend-cerrar-ok') { const cobros = cobrosProfHoy(id); S.rendiciones.push({ id: 'r-' + id + '-' + HOY_KEY, prof: id, fecha: HOY_KEY, estado: 'cerrada', cerrada: ahoraHM(), turnos: turnosProfHoy(id).filter((t) => t.estado === 'atendido').length, totales: null, cobros: cobros.map((c) => c.id) }); save(); closeModal(); render(); toast('Rendición cerrada', 'Ya se puede enviar al profesional.'); return; }
+    if (a === 'rend-enviar') { enviarRendicion(id); return; }
+    if (a === 'rend-enviar-ok') { const r = rendicionHoy(id); r.estado = 'enviada'; r.enviada = ahoraHM(); save(); closeModal(); render(); toast('Rendición enviada', `${prof(id).corto} la recibe por WhatsApp con el detalle.`); return; }
+    if (a === 'rend-confirmar') { const r = rendicionHoy(id); r.estado = 'recibida'; r.recibida = ahoraHM(); save(); render(); toast('Rendición recibida', `${prof(id).corto} confirmó la recepción. Queda archivada.`); return; }
+    if (a === 'rend-ver') { verRendicion(id); return; }
+    if (a === 'hist-todas') { S.ui.histTodas = true; save(); render(); return; }
+    if (a === 'print') { window.print(); return; }
+    if (a === 'export-csv') { exportCSV(); return; }
+    if (a === 'evo-save') { guardarEvolucion(id); return; }
+    if (a === 'evo-editar') { toast('No se puede editar', 'Las evoluciones firmadas no se modifican. Si hay que corregir, se agrega una aclaración nueva.'); return; }
+    if (a === 'est-informar') { informar(id); return; }
+    if (a === 'est-informar-ok') { const txt = ($('#inf-txt').value || '').trim(); if (txt.length < 20 || txt.includes('[ ]')) { $('#inf-err').textContent = 'Completá el informe antes de firmar (quedan campos entre corchetes).'; return; } const e = S.estudios.find((x) => x.id === id); e.informe = txt; e.estado = 'informado'; e.firmado = fechaCorta(HOY_KEY) + ' ' + ahoraHM(); save(); closeModal(); render(); toast('Informe firmado', 'Ya se puede enviar al paciente.'); return; }
+    if (a === 'est-enviar') { enviarEstudio(id); return; }
+    if (a === 'est-enviar-ok') { const e = S.estudios.find((x) => x.id === id); e.estado = 'enviado'; e.enviado = fechaCorta(HOY_KEY) + ' ' + ahoraHM(); save(); closeModal(); render(); toast('Informe enviado', 'El paciente lo recibe por WhatsApp con su enlace personal.'); return; }
+    if (a === 'est-ver') { verInforme(id); return; }
+    if (a === 'est-subir') { S.estudios.push({ id: uid('s'), dni: id, tipo: 'ECG de reposo', fecha: HOY_KEY, prof: 'pm', estado: 'realizado', archivo: 'ecg-' + HOY_KEY + '.pdf' }); save(); render(); toast('Estudio subido', 'Queda pendiente de informe.'); return; }
+    if (a === 'portal-ok') { const e = S.estudios.find((x) => x.token === id); const v = ($('#portal-dni').value || '').replace(/\D/g, ''); if (!v) { $('#portal-err').textContent = 'Ingresá tu DNI sin puntos.'; return; } if (e && v === e.dni) { S.ui.portalOk = id; save(); render(); } else { $('#portal-err').textContent = 'El DNI no coincide con el de este informe.'; } return; }
+    if (a === 'portal-salir') { S.ui.portalOk = null; save(); render(); return; }
+    if (a === 'ver-conv') { toast('Conversación de WhatsApp', 'Abre el chat del paciente en el sistema de atención, con todo el historial.'); return; }
+    if (a === 'editar' || a === 'editar-ficha' || a === 'agregar-tel' || a === 'adjuntar' || a === 'descargar-lista') { toast('En el prototipo esto no edita', 'En el sistema real abre el formulario correspondiente.'); return; }
+  });
+  document.addEventListener('input', (ev) => {
+    const el = ev.target;
+    if (el.closest && el.closest('#lineas')) { if (el.name === 'medio') { refrescarCobro(); } else if (el.name === 'importe') { COBRO.lineas = leerLineas(); $('#cobro-total').textContent = fmt(totales([COBRO]).total); } return; }
+    if (el.id === 'q') { S.ui.q = el.value; S.ui.qFocus = true; save(); render(); S.ui.qFocus = false; }
+  });
+  document.addEventListener('change', (ev) => { const el = ev.target; if (el.dataset && el.dataset.action === 'rend-filtro') { S.ui.rendProf = el.value; save(); render(); } });
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeModal(); if (ev.key === 'Enter' && ev.target.id === 'portal-dni') { const b = $('[data-action=portal-ok]'); if (b) b.click(); } });
+  window.addEventListener('hashchange', render);
+
+  S = load(); render();
+})();

@@ -1,0 +1,84 @@
+import sys, json, subprocess, time, os
+from pathlib import Path
+from playwright.sync_api import sync_playwright
+
+ROOT = Path(__file__).resolve().parent.parent
+DIST = ROOT / "dist"
+OUT = ROOT / "qa" / "out"
+OUT.mkdir(exist_ok=True, parents=True)
+PORT = 8765
+
+srv = subprocess.Popen([sys.executable, "-m", "http.server", str(PORT), "--bind", "127.0.0.1"], cwd=DIST, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+time.sleep(0.8)
+base = f"http://127.0.0.1:{PORT}/"
+errors = []
+try:
+    with sync_playwright() as p:
+        b = p.chromium.launch()
+        ctx = b.new_context(viewport={"width": 1366, "height": 900}, device_scale_factor=1)
+        page = ctx.new_page()
+        page.on("console", lambda m: errors.append(f"[{m.type}] {m.text}") if m.type in ("error", "warning") else None)
+        page.on("pageerror", lambda e: errors.append(f"[pageerror] {e}"))
+
+        def go(hash_, name, wait=400):
+            page.goto(base + "#" + hash_)
+            page.wait_for_timeout(wait)
+            page.screenshot(path=str(OUT / f"{name}.png"), full_page=True)
+
+        go("/", "00-login")
+        page.click("[data-action=login][data-rol=recepcion]"); page.wait_for_timeout(300)
+        page.screenshot(path=str(OUT / "01-agenda.png"), full_page=True)
+        # cobrar Zalazar (t17, en espera)
+        page.click("[data-action=cobrar][data-id=t17]"); page.wait_for_timeout(300)
+        page.screenshot(path=str(OUT / "02-cobro-modal.png"), full_page=True)
+        page.click("[data-action=cobro-save]"); page.wait_for_timeout(500)
+        page.screenshot(path=str(OUT / "03-agenda-cobrado.png"), full_page=True)
+        go("/caja", "04-caja")
+        page.click("[data-action=rend-cerrar]"); page.wait_for_timeout(300)
+        page.screenshot(path=str(OUT / "05-cerrar-modal.png"), full_page=True)
+        page.click("[data-action=rend-cerrar-ok]"); page.wait_for_timeout(400)
+        page.click("[data-action=rend-enviar]"); page.wait_for_timeout(300)
+        page.screenshot(path=str(OUT / "06-enviar-modal.png"), full_page=True)
+        page.click("[data-action=rend-enviar-ok]"); page.wait_for_timeout(400)
+        page.click("[data-action=rend-confirmar]"); page.wait_for_timeout(400)
+        page.screenshot(path=str(OUT / "07-caja-recibida.png"), full_page=True)
+        go("/rendiciones", "08-rendiciones")
+        go("/pacientes", "09-pacientes")
+        go("/pacientes/10234567", "10-paciente-ficha")
+        go("/pacientes/10234567/historia", "11-paciente-historia-recepcion")
+        # médico
+        page.click("[data-action=logout]"); page.wait_for_timeout(200)
+        page.click("[data-action=login][data-rol=medico]"); page.wait_for_timeout(300)
+        page.screenshot(path=str(OUT / "12-medico-agenda.png"), full_page=True)
+        go("/pacientes/10234567/historia", "13-medico-historia")
+        go("/pacientes/13444555/estudios", "14-medico-estudios")
+        go("/informes", "15-informes")
+        page.click("[data-action=est-informar][data-id=s4]"); page.wait_for_timeout(300)
+        page.screenshot(path=str(OUT / "16-informar-modal.png"), full_page=True)
+        page.fill("#inf-txt", "Prueba ergométrica graduada en cinta, protocolo de Bruce. Alcanza 8 METs, 87% de la FCMT. Sin cambios del segmento ST. Respuesta tensional normal. Sin arritmias. Conclusión: negativa para isquemia, buena capacidad funcional.")
+        page.click("[data-action=est-informar-ok]"); page.wait_for_timeout(400)
+        page.click("[data-action=est-enviar][data-id=s4]"); page.wait_for_timeout(300)
+        page.screenshot(path=str(OUT / "17-enviar-modal.png"), full_page=True)
+        page.click("[data-action=est-enviar-ok]"); page.wait_for_timeout(400)
+        go("/portal/a1b2c3", "18-portal")
+        page.fill("#portal-dni", "10234567"); page.click("[data-action=portal-ok]"); page.wait_for_timeout(400)
+        page.screenshot(path=str(OUT / "19-portal-informe.png"), full_page=True)
+        # admin
+        go("/", "x"); page.click("[data-action=logout]"); page.wait_for_timeout(200)
+        page.click("[data-action=login][data-rol=admin]"); page.wait_for_timeout(300)
+        go("/importacion", "20-importacion")
+        go("/config", "21-config")
+        # mobile
+        m = b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1, is_mobile=True)
+        mp = m.new_page()
+        mp.on("pageerror", lambda e: errors.append(f"[pageerror-mobile] {e}"))
+        mp.goto(base + "#/"); mp.wait_for_timeout(300)
+        mp.click("[data-action=login][data-rol=recepcion]"); mp.wait_for_timeout(300)
+        mp.screenshot(path=str(OUT / "30-mobile-agenda.png"), full_page=True)
+        mp.goto(base + "#/caja"); mp.wait_for_timeout(300)
+        mp.screenshot(path=str(OUT / "31-mobile-caja.png"), full_page=True)
+        b.close()
+finally:
+    srv.terminate()
+print("\n".join(errors) if errors else "sin errores de consola")
+print("capturas:", len(list(OUT.glob("*.png"))))
