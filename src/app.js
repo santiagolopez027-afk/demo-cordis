@@ -91,9 +91,9 @@
       <h1 class="mt-lg">Ingresar como</h1>
       <p class="muted" style="margin-top:6px">Cada rol ve solo lo que necesita. Elegí uno para recorrer el sistema; podés cambiarlo en cualquier momento.</p>
       <div class="roles">
-        <button class="role" data-action="login" data-rol="recepcion"><i class="ti ti-desk"></i><b>Recepción</b><span>Agenda del día, llegadas, cobros con medio de pago y rendición de cada profesional.</span></button>
-        <button class="role" data-action="login" data-rol="medico"><i class="ti ti-stethoscope"></i><b>Profesional</b><span>Su agenda, historia clínica de cada paciente, estudios e informes para enviar.</span></button>
-        <button class="role" data-action="login" data-rol="admin"><i class="ti ti-building"></i><b>Dirección</b><span>Todo lo anterior más resumen mensual, importación del sistema anterior y configuración.</span></button>
+        <button class="role" data-action="login" data-rol="recepcion"><i class="ti ti-desk"></i><b>Recepción</b><span>Agenda del día, llegadas, cobros con medio de pago y rendición de cada profesional.</span><em>Además: responde lo que el asistente deriva, en Conversaciones.</em></button>
+        <button class="role" data-action="login" data-rol="medico"><i class="ti ti-stethoscope"></i><b>Profesional</b><span>Su agenda, historia clínica de cada paciente, estudios e informes para enviar.</span><em>Además: su Google Calendar y el resumen del día por WhatsApp. No entra al panel.</em></button>
+        <button class="role" data-action="login" data-rol="admin"><i class="ti ti-building"></i><b>Dirección</b><span>Todo lo anterior más tablero, resumen mensual, importación del sistema anterior y configuración.</span><em>Además: el panel del sistema de atención, con métricas y conversaciones.</em></button>
       </div>
       <p class="tiny faint mt-lg">La atención por WhatsApp, la agenda y los recordatorios viven en el sistema de atención; este módulo se conecta a él. Potenta AI, 2026.</p>
     </div></div>`;
@@ -103,9 +103,10 @@
   /* ---------- shell ---------- */
   function navItems() {
     const r = S.rol; const items = [];
+    const derivadas = CONVERSACIONES.filter((c) => c.estado === 'derivada').length;
     if (r === 'medico') { items.push(['agenda', 'ti-calendar', 'Mi agenda']); items.push(['pacientes', 'ti-users', 'Pacientes']); const pend = S.estudios.filter((e) => e.estado === 'realizado').length; items.push(['informes', 'ti-file-text', 'Informes', pend]); }
-    else { items.push(['agenda', 'ti-calendar', 'Agenda del día']); items.push(['caja', 'ti-cash', 'Caja y rendición']); items.push(['rendiciones', 'ti-report-money', 'Rendiciones']); items.push(['pacientes', 'ti-users', 'Pacientes']); }
-    if (r === 'admin') { items.push(['importacion', 'ti-database-import', 'Importación']); items.push(['config', 'ti-settings', 'Configuración']); }
+    else { if (r === 'admin') items.push(['tablero', 'ti-chart-bar', 'Tablero']); items.push(['agenda', 'ti-calendar', 'Agenda del día']); items.push(['caja', 'ti-cash', 'Caja y rendición']); items.push(['rendiciones', 'ti-report-money', 'Rendiciones']); items.push(['pacientes', 'ti-users', 'Pacientes']); items.push(['conversaciones', 'ti-brand-whatsapp', 'Conversaciones', derivadas]); }
+    if (r === 'admin') { items.push(['importacion', 'ti-database-import', 'Importación']); items.push(['config', 'ti-settings', 'Configuración']); items.push(['accesos', 'ti-layout-sidebar', 'Panel y accesos']); }
     return items;
   }
   function shell(name, title, sub, body, extraHead) {
@@ -149,6 +150,7 @@
           <thead><tr><th>Hora</th><th>Paciente</th><th>Tipo</th><th>Estado</th><th>Llegó</th><th>Entró</th><th>Cobro</th><th></th></tr></thead>
           <tbody>${rows}</tbody></table></div>
       </div>
+      ${S.rol === 'medico' ? resumenDiaWA(p, ts) : ''}
       <div class="row mt small muted" style="gap:16px"><span>${pill('solicitado')} reservó y no confirmó</span><span>${pill('confirmado')} confirmó por WhatsApp</span><span>${pill('llego')} llegó al centro</span><span>${pill('atencion')} con el profesional</span><span>${pill('atendido')}</span><span>${pill('novino')} dispara el recupero automático</span></div>`;
     return shell('agenda', S.rol === 'medico' ? 'Mi agenda' : 'Agenda del día', sub, body);
   }
@@ -161,11 +163,11 @@
     else cobro = `<span class="muted small">Pendiente</span>`;
     const acciones = [];
     const puedeCobrar = S.rol !== 'medico';
-    if (['solicitado', 'confirmado'].includes(t.estado)) { acciones.push(btn('llego', t.id, 'Llegó', 'teal')); acciones.push(btn('novino', t.id, 'No vino', 'danger')); acciones.push(btn('reprogramar', t.id, 'Reprogramar')); }
+    if (['solicitado', 'confirmado'].includes(t.estado) && puedeCobrar) { acciones.push(btn('llego', t.id, 'Llegó', 'teal')); acciones.push(btn('novino', t.id, 'No vino', 'danger')); acciones.push(btn('reprogramar', t.id, 'Reprogramar')); }
     if (t.estado === 'llego') { acciones.push(btn('entro', t.id, 'Entró', 'teal')); if (puedeCobrar && !c) acciones.push(btn('cobrar', t.id, 'Cobrar', 'primary')); }
     if (t.estado === 'atencion') { acciones.push(btn('atendido', t.id, 'Atendido', 'teal')); if (puedeCobrar && !c) acciones.push(btn('cobrar', t.id, 'Cobrar', 'primary')); }
     if (t.estado === 'atendido' && puedeCobrar) { acciones.push(c ? btn('ver-cobro', c.id, 'Ver cobro') : btn('cobrar', t.id, 'Cobrar', 'primary')); }
-    if (t.estado === 'novino') acciones.push(btn('reprogramar', t.id, 'Reprogramar'));
+    if (t.estado === 'novino' && puedeCobrar) acciones.push(btn('reprogramar', t.id, 'Reprogramar'));
     if (S.rol === 'medico') acciones.push(`<a class="btn sm" href="#/pacientes/${p.dni}/historia"><i class="ti ti-notes"></i>Historia</a>`);
     const dim = t.estado === 'novino' ? ' class="dim"' : '';
     return `<tr${dim}>
@@ -381,7 +383,7 @@
   function fichaTab(p, o) {
     const tel = p.telefonos.map((t) => `<tr><td class="num nowrap">${t.num}</td><td>${t.propio ? 'Propio' : esc(t.titular)}</td><td class="small muted">${t.propio ? 'Recibe recordatorios y avisos' : 'Reserva y recibe los avisos por esta persona'}</td></tr>`).join('');
     const otros = PACIENTES.filter((x) => x.dni !== p.dni && x.telefonos.some((t) => p.telefonos.some((u) => u.num === t.num)));
-    return `<div class="two" style="grid-template-columns:1fr 1fr">
+    return `<div class="two halves">
       <div class="panel"><h3>Teléfonos de WhatsApp vinculados</h3><table class="tbl mt"><thead><tr><th>Número</th><th>De quién es</th><th></th></tr></thead><tbody>${tel}</tbody></table>
         ${otros.length ? `<div class="note mt">Este número también está vinculado a: ${otros.map((x) => `<a href="#/pacientes/${x.dni}">${esc(nombrePac(x))}</a>`).join(', ')}. Cuando escriben, el asistente pregunta para quién es el turno y pide el DNI.</div>` : ''}
         <button class="btn sm mt" data-action="agregar-tel"><i class="ti ti-plus"></i>Vincular otro número</button></div>
@@ -410,7 +412,7 @@
     const acc = S.accesos.filter((a) => a.dni === p.dni).slice(-4).reverse();
     const lista = evs.map((e) => `<div class="evo"><div class="when"><b>${fechaMedia(e.fecha)}</b>${e.hora || ''}<br>${esc(prof(e.prof).corto)}</div><div><div class="txt">${esc(e.texto)}</div><div class="by"><span class="pill ok" style="font-size:11px"><i class="ti ti-signature"></i> Firmada</span>${e.importada ? '<span class="pill" style="font-size:11px">Importada del sistema anterior</span>' : ''}<button class="btn xs ghost" data-action="evo-editar" title="Las evoluciones firmadas no se modifican">Editar</button></div></div></div>`).join('');
     const puede = S.rol === 'medico';
-    return `<div class="two" style="grid-template-columns:minmax(0,1fr) 320px">
+    return `<div class="two side-right">
       <div class="panel"><div class="row between"><h3>Evoluciones</h3><span class="small muted">${evs.length} registros</span></div>
         ${lista || '<p class="muted mt">Sin evoluciones todavía.</p>'}
         ${puede ? `<div class="mt-lg"><h3>Nueva evolución</h3><div class="field mt"><textarea class="input" id="evo-txt" placeholder="Escribí la evolución de hoy. Al guardar queda firmada por vos con fecha y hora."></textarea></div><div id="evo-err" class="tiny" style="color:var(--red);min-height:16px"></div><div class="row"><button class="btn primary" data-action="evo-save" data-id="${p.dni}"><i class="ti ti-signature"></i>Guardar y firmar</button><button class="btn" data-action="adjuntar"><i class="ti ti-paperclip"></i>Adjuntar archivo</button></div></div>` : `<div class="note mt">Dirección ve la historia en modo lectura. Las evoluciones las escriben y firman los profesionales.</div>`}
@@ -503,6 +505,78 @@
     return shell('config', 'Configuración', 'Profesionales, aranceles, cupos y usuarios', body);
   }
 
+  /* ---------- resumen del día por WhatsApp (médico) ---------- */
+  function resumenDiaWA(p, ts) {
+    const pr = prof(p); const lineas = ts.map((t) => `${t.hora} ${pac(t.dni).apellido}, ${pac(t.dni).nombre} · ${t.tipo}${t.nuevo ? ' (nuevo)' : ''}`).join('\n');
+    const msg = `Buen día ${pr.corto}. Hoy tiene ${ts.length} turnos:\n${lineas}\n\nCambios desde ayer: 1 turno nuevo (17:40, Arias), 1 reprogramado para el jueves. Bloqueos: ninguno.\nCordis`;
+    return `<div class="panel mt"><div class="row between"><h3>Resumen del día por WhatsApp</h3><span class="small muted">Enviado hoy 8:00 al ${esc(pr.tel)} · se manda solo, con los cambios de la agenda</span></div><div class="wa mt" style="max-width:560px">${esc(msg)}<span class="t">08:00 ✓✓</span></div></div>`;
+  }
+
+  /* ---------- conversaciones (bandeja del sistema de atención) ---------- */
+  const CANAL = { whatsapp: ['ti-brand-whatsapp', 'WhatsApp'], web: ['ti-world', 'Web'], instagram: ['ti-brand-instagram', 'Instagram'] };
+  function conversacionesView() {
+    const sel = S.ui.conv || CONVERSACIONES[0].id; const c = CONVERSACIONES.find((x) => x.id === sel) || CONVERSACIONES[0];
+    const filtro = S.ui.convFiltro || 'todas'; const visibles = filtro === 'derivadas' ? CONVERSACIONES.filter((x) => x.estado === 'derivada') : CONVERSACIONES;
+    const estadoPill = (e) => e === 'derivada' ? '<span class="pill warn">Derivada · espera respuesta</span>' : e === 'respondida' ? '<span class="pill ok">Respondida por recepción</span>' : '<span class="pill info">Resuelta por el asistente</span>';
+    const lista = visibles.map((x) => { const p = pac(x.dni); const k = CANAL[x.canal]; return `<a href="#/conversaciones/${x.id}" class="conv ${x.id === c.id ? 'on' : ''}"><div class="row between"><b>${esc(nombrePac(p))}</b><span class="tiny muted num">${x.hora}</span></div><div class="small muted"><i class="ti ${k[0]}"></i> ${k[1]} · ${esc(x.motivo)}</div><div class="mt-xs">${estadoPill(x.estado)}</div></a>`; }).join('');
+    const p = pac(c.dni);
+    const msgs = c.mensajes.map(([q, t]) => `<div class="msg ${q}"><div class="who">${q === 'p' ? esc(p.nombre) : q === 'a' ? 'Asistente' : 'Vicky · Recepción'}</div>${esc(t)}</div>`).join('');
+    const d = CONVERSACIONES.filter((x) => x.estado === 'derivada').length;
+    const body = `<div class="note info mb"><i class="ti ti-info-circle"></i> Esta bandeja vive en el sistema de atención: desde acá se abre en una pestaña con el mismo usuario. Se muestra para ver cómo llega lo derivado. Hoy: ${METRICAS_ATENCION.conversaciones > 0 ? '86' : ''} conversaciones, 81 resueltas por el asistente, 5 derivadas, ${d} esperando respuesta.</div>
+      <div class="two conv-grid">
+        <div class="panel tight"><div class="head" style="flex-wrap:wrap;gap:10px"><h2>Hoy</h2><span class="seg" style="flex-wrap:nowrap"><button class="${filtro === 'derivadas' ? 'on' : ''}" data-action="conv-filtro" data-id="derivadas">Derivadas <span class="n">${d}</span></button><button class="${filtro === 'todas' ? 'on' : ''}" data-action="conv-filtro" data-id="todas">Todas <span class="n">${CONVERSACIONES.length}</span></button></span></div><div class="convs">${lista || '<div class="muted small" style="padding:16px">Nada pendiente.</div>'}</div></div>
+        <div class="panel tight"><div class="head"><div><h2>${esc(nombrePac(p))}</h2><div class="small muted">DNI ${dniFmt(p.dni)} · ${esc(obra(p.obra).nombre)} · ${p.telefonos[0].num}${p.telefonos[0].propio ? '' : ' (' + esc(p.telefonos[0].titular) + ')'}</div></div><div class="row"><a class="btn sm" href="#/pacientes/${p.dni}"><i class="ti ti-user"></i>Ficha</a><a class="btn sm" href="#/pacientes/${p.dni}/turnos"><i class="ti ti-calendar"></i>Turnos</a></div></div>
+          <div class="chat">${msgs}</div>
+          <div class="chatbox"><input class="input" placeholder="Escribí para responder vos: el asistente se hace a un lado en esta conversación" data-action="chat-input"><button class="btn primary" data-action="chat-send" data-id="${c.id}"><i class="ti ti-send"></i>Responder</button></div></div>
+      </div>`;
+    return shell('conversaciones', 'Conversaciones', 'Lo que el asistente derivó a una persona y lo que resolvió solo', body);
+  }
+
+  /* ---------- tablero (dirección) ---------- */
+  function tableroView() {
+    const M = METRICAS_ATENCION; const mesKey = HOY_KEY.slice(0, 7);
+    const rend = S.rendiciones.filter((r) => r.fecha.startsWith(mesKey)); const tot = { efectivo: 0, transferencia: 0, tarjetas: 0, mp: 0 };
+    rend.forEach((r) => { const t = totalesRend(r); tot.efectivo += t.efectivo; tot.transferencia += t.transferencia; tot.tarjetas += t.debito + t.credito; tot.mp += t.mp; });
+    const totalCaja = tot.efectivo + tot.transferencia + tot.tarjetas + tot.mp;
+    const bar = (label, v, max, cls, money) => `<div class="hbar"><span class="l">${label}</span><span class="track"><span class="fill ${cls || ''}" style="width:${Math.round(v / max * 100)}%"></span></span><span class="v num">${money ? fmt(v) : v.toLocaleString('es-AR')}</span></div>`;
+    const canales = M.canales.map(([n, v]) => bar(n, v, 100).replace('</span></div>', ' %</span></div>')).join('');
+    const embudo = M.embudo.map(([n, v], i) => bar(n, v, M.embudo[0][1], i === 3 ? 'ok' : '')).join('');
+    const medios = [['Efectivo', tot.efectivo], ['Transferencias', tot.transferencia], ['Tarjetas', tot.tarjetas], ['Señas MP', tot.mp]].map(([n, v]) => bar(n, v, totalCaja, '', true)).join('');
+    const espera = PROFESIONALES.filter((p) => !p.estudio || p.id === 'erg').map((p) => { const ts = turnosProfHoy(p.id).filter((t) => t.llego && t.entro); const m = ts.length ? Math.round(ts.reduce((a, t) => a + (toMin(t.entro) - toMin(t.llego)), 0) / ts.length) : null; return [p.corto, m]; }).filter((x) => x[1] !== null);
+    const esperaBars = espera.map(([n, v]) => bar(n, v, 20)).join('');
+    const pend = S.estudios.filter((e) => e.estado === 'realizado').length;
+    const body = `<div class="section-title"><h2>Atención</h2><span class="small muted">Del sistema de atención, ${M.mes} · se actualiza solo</span></div>
+      <div class="kpis mb"><div class="kpi"><div class="l">Conversaciones</div><div class="v">${M.conversaciones.toLocaleString('es-AR')}</div><div class="d">${M.fueraHorario} % fuera del horario de recepción</div></div><div class="kpi"><div class="l">Resueltas sin intervención</div><div class="v">${M.resueltas} %</div><div class="d">${M.derivadas} derivadas a recepción</div></div><div class="kpi"><div class="l">Turnos agendados por el asistente</div><div class="v">${M.turnosAsistente}</div><div class="d">más ${M.turnosWeb} por la web</div></div><div class="kpi"><div class="l">Ausentismo</div><div class="v">${M.ausentismo.toLocaleString('es-AR')} %</div><div class="d">recupero enviado a todos</div></div><div class="kpi"><div class="l">Tiempo de respuesta</div><div class="v">${M.tiempoRespuesta}</div><div class="d">promedio, las 24 h</div></div></div>
+      <div class="two halves mb"><div class="panel"><h3>De dónde escriben</h3><div class="mt">${canales}</div></div><div class="panel"><h3>Embudo del mes</h3><div class="mt">${embudo}</div><div class="tiny muted mt">De los que pidieron turno, el 81 % reservó; de los que reservaron, el 90 % asistió.</div></div></div>
+      <div class="section-title"><h2>Operación y caja</h2><span class="small muted">De este módulo, ${MESES[HOY.getMonth()]} · <a href="#/rendiciones">ver rendiciones</a></span></div>
+      <div class="kpis mb"><div class="kpi"><div class="l">Cobrado en el mes</div><div class="v">${fmt(totalCaja)}</div><div class="d">${rend.length} rendiciones cerradas</div></div><div class="kpi"><div class="l">Efectivo entregado a profesionales</div><div class="v">${fmt(tot.efectivo)}</div><div class="d">${Math.round(tot.efectivo / totalCaja * 100)} % del total</div></div><div class="kpi"><div class="l">Órdenes a liquidar</div><div class="v">227</div><div class="d">6 obras sociales</div></div><div class="kpi"><div class="l">Estudios sin informar</div><div class="v">${pend}</div><div class="d">de hoy</div></div></div>
+      <div class="two halves"><div class="panel"><h3>Cobrado por medio de pago</h3><div class="mt">${medios}</div></div><div class="panel"><h3>Espera promedio hoy (llegó → entró)</h3><div class="mt">${esperaBars || '<span class="muted small">Sin datos todavía</span>'}</div><div class="tiny muted mt">Minutos. Sale de los botones Llegó y Entró de la agenda.</div></div></div>`;
+    return shell('tablero', 'Tablero', `Lo que pasa con la atención y con la caja, en una sola pantalla`, body);
+  }
+  const toMin = (hm) => { const [h, m] = hm.split(':').map(Number); return h * 60 + m; };
+
+  /* ---------- panel y accesos (dirección) ---------- */
+  function accesosView() {
+    const menu = (items) => `<div class="fake-side"><div class="fs-brand"><span class="fs-logo"></span>Cordis</div>${items.map(([i, l, on, off]) => `<div class="fs-item ${on ? 'on' : ''} ${off ? 'off' : ''}"><i class="ti ${i}"></i>${l}${off ? '<span class="fs-tag">oculto</span>' : ''}</div>`).join('')}</div>`;
+    const direccion = menu([['ti-apps', 'Gestión Cordis', true], ['ti-message-2', 'Conversaciones'], ['ti-chart-bar', 'Panel'], ['ti-users', 'Contactos'], ['ti-calendar', 'Calendario'], ['ti-layout-kanban', 'Pacientes por etapa'], ['ti-credit-card', 'Pagos'], ['ti-star', 'Reseñas'], ['ti-settings-automation', 'Automatizaciones', false, true], ['ti-world', 'Sitios', false, true], ['ti-speakerphone', 'Marketing', false, true], ['ti-settings', 'Configuración', false, true]]);
+    const recepcion = menu([['ti-apps', 'Gestión Cordis', true], ['ti-message-2', 'Conversaciones'], ['ti-users', 'Contactos'], ['ti-calendar', 'Calendario (ver)'], ['ti-chart-bar', 'Panel', false, true], ['ti-layout-kanban', 'Pacientes por etapa', false, true], ['ti-credit-card', 'Pagos', false, true], ['ti-settings', 'Configuración', false, true]]);
+    const body = `<div class="note mb">Hay dos lugares: <b>esta app</b> (gestión del centro: agenda, caja, historia clínica) y el <b>panel del sistema de atención</b> (asistente, conversaciones, métricas de atención). Ambos con la misma dirección de acceso, y la app aparece como primer ítem del menú del panel. Los profesionales no necesitan el panel.</div>
+      <div class="two halves mb">
+        <div class="panel"><h3>Lo que ve Dirección en el panel</h3><div class="small muted mb">Usuario sin permisos de configuración. Lo gris está oculto para esta cuenta.</div>${direccion}</div>
+        <div class="panel"><h3>Lo que ve Recepción en el panel</h3><div class="small muted mb">Solo conversaciones y contactos; el resto del día pasa en esta app.</div>${recepcion}</div>
+      </div>
+      <div class="panel tight"><div class="head"><div><h2>Quién usa qué</h2></div></div><div class="table-wrap"><table class="tbl"><thead><tr><th>Rol</th><th>Esta app</th><th>Panel del sistema de atención</th><th>Otros</th></tr></thead><tbody>
+        <tr><td class="name">Pacientes</td><td>Portal con DNI y página de reserva web</td><td class="muted">—</td><td>WhatsApp con el asistente</td></tr>
+        <tr><td class="name">Recepción (3 personas)</td><td>Agenda, llegadas, cobros, rendición, fichas, estudios pendientes</td><td>Conversaciones derivadas, contactos</td><td>App móvil de la bandeja (opcional)</td></tr>
+        <tr><td class="name">Profesionales</td><td>Mi agenda, historia clínica, informes; PC y celular</td><td class="muted">No entran</td><td>Google Calendar, resumen diario por WhatsApp</td></tr>
+        <tr><td class="name">Técnicos de estudios</td><td>Agenda del estudio, subir trazados</td><td class="muted">No entran</td><td class="muted">—</td></tr>
+        <tr><td class="name">Dirección</td><td>Tablero, rendiciones, resumen mensual, importación, configuración, usuarios</td><td>Panel de métricas, conversaciones, contactos, pacientes por etapa, pagos</td><td class="muted">—</td></tr>
+        <tr><td class="name">Potenta AI</td><td>Administración y soporte</td><td>Asistente, flujos, calendarios, plantillas</td><td class="muted">—</td></tr>
+      </tbody></table></div></div>
+      <div class="panel mt"><h3>Acceso</h3><div class="small mt stack" style="gap:6px"><div>Dirección: <b>gestion.cordis.com.ar</b> (o el subdominio que elijan) con usuario y contraseña propios; también desde el ítem "Gestión Cordis" del panel.</div><div>Celular: se abre en el navegador y se agrega a la pantalla de inicio como una app. Sin instalaciones ni escritorio remoto.</div><div>Cada persona con su usuario; todo acceso a historia clínica queda registrado.</div></div></div>`;
+    return shell('accesos', 'Panel y accesos', 'Dónde entra cada uno y qué ve', body);
+  }
+
   /* ---------- router ---------- */
   function route() { const h = location.hash.replace(/^#\/?/, ''); const parts = h.split('/').filter(Boolean); return { name: parts[0] || '', parts }; }
   function render() {
@@ -520,6 +594,9 @@
     else if (name === 'informes') html = informesView();
     else if (name === 'importacion') html = importacionView();
     else if (name === 'config') html = configView();
+    else if (name === 'conversaciones') { if (r.parts[1]) { S.ui.conv = r.parts[1]; } html = conversacionesView(); }
+    else if (name === 'tablero') html = tableroView();
+    else if (name === 'accesos') html = accesosView();
     app.innerHTML = html;
     if (name === 'pacientes' && !r.parts[1]) { const q = $('#q'); if (q && S.ui.qFocus) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
     window.scrollTo(0, 0);
@@ -568,7 +645,9 @@
     if (a === 'est-subir') { S.estudios.push({ id: uid('s'), dni: id, tipo: 'ECG de reposo', fecha: HOY_KEY, prof: 'pm', estado: 'realizado', archivo: 'ecg-' + HOY_KEY + '.pdf' }); save(); render(); toast('Estudio subido', 'Queda pendiente de informe.'); return; }
     if (a === 'portal-ok') { const e = S.estudios.find((x) => x.token === id); const v = ($('#portal-dni').value || '').replace(/\D/g, ''); if (!v) { $('#portal-err').textContent = 'Ingresá tu DNI sin puntos.'; return; } if (e && v === e.dni) { S.ui.portalOk = id; save(); render(); } else { $('#portal-err').textContent = 'El DNI no coincide con el de este informe.'; } return; }
     if (a === 'portal-salir') { S.ui.portalOk = null; save(); render(); return; }
-    if (a === 'ver-conv') { toast('Conversación de WhatsApp', 'Abre el chat del paciente en el sistema de atención, con todo el historial.'); return; }
+    if (a === 'ver-conv') { const cv = CONVERSACIONES.find((x) => x.dni === id); if (cv && S.rol !== 'medico') { location.hash = '#/conversaciones/' + cv.id; } else { toast('Conversación de WhatsApp', 'Abre el chat del paciente en el sistema de atención, con todo el historial.'); } return; }
+    if (a === 'conv-filtro') { S.ui.convFiltro = id; render(); return; }
+    if (a === 'chat-send') { const inp = $('[data-action=chat-input]'); const txt = (inp.value || '').trim(); if (!txt) { toast('Escribí la respuesta primero'); return; } const cv = CONVERSACIONES.find((x) => x.id === id); cv.mensajes.push(['r', txt]); cv.estado = 'respondida'; render(); toast('Respuesta enviada por WhatsApp', 'El asistente queda en pausa en esta conversación hasta que vos la cierres.'); return; }
     if (a === 'editar' || a === 'editar-ficha' || a === 'agregar-tel' || a === 'adjuntar' || a === 'descargar-lista') { toast('En el prototipo esto no edita', 'En el sistema real abre el formulario correspondiente.'); return; }
   });
   document.addEventListener('input', (ev) => {
@@ -577,7 +656,7 @@
     if (el.id === 'q') { S.ui.q = el.value; S.ui.qFocus = true; save(); render(); S.ui.qFocus = false; }
   });
   document.addEventListener('change', (ev) => { const el = ev.target; if (el.dataset && el.dataset.action === 'rend-filtro') { S.ui.rendProf = el.value; save(); render(); } });
-  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeModal(); if (ev.key === 'Enter' && ev.target.id === 'portal-dni') { const b = $('[data-action=portal-ok]'); if (b) b.click(); } });
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeModal(); if (ev.key === 'Enter' && ev.target.dataset && ev.target.dataset.action === 'chat-input') { const b = $('[data-action=chat-send]'); if (b) b.click(); } if (ev.key === 'Enter' && ev.target.id === 'portal-dni') { const b = $('[data-action=portal-ok]'); if (b) b.click(); } });
   window.addEventListener('hashchange', render);
 
   S = load(); render();

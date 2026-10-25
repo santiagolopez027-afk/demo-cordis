@@ -3,7 +3,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
-DIST = ROOT / "dist"
+DIST = ROOT  # index.html se publica desde la raíz
 OUT = ROOT / "qa" / "out"
 OUT.mkdir(exist_ok=True, parents=True)
 PORT = 8765
@@ -68,6 +68,19 @@ try:
         page.click("[data-action=login][data-rol=admin]"); page.wait_for_timeout(300)
         go("/importacion", "20-importacion")
         go("/config", "21-config")
+        go("/tablero", "22-tablero")
+        go("/accesos", "23-accesos")
+        go("/conversaciones", "24-conversaciones")
+        page.click("[data-action=chat-input]"); page.fill("[data-action=chat-input]", "Hola Marcos, soy Vicky de Cordis. El informe quedó listo, se lo mando ahora por acá.")
+        page.click("[data-action=chat-send]"); page.wait_for_timeout(400)
+        page.screenshot(path=str(OUT / "25-conversacion-respondida.png"), full_page=True)
+        # recepción ve conversaciones; médico ve resumen WA
+        go("/", "x"); page.click("[data-action=logout]"); page.wait_for_timeout(200)
+        page.click("[data-action=login][data-rol=recepcion]"); page.wait_for_timeout(300)
+        go("/conversaciones/cv2", "26-recepcion-conversacion")
+        go("/", "x"); page.click("[data-action=logout]"); page.wait_for_timeout(200)
+        page.click("[data-action=login][data-rol=medico]"); page.wait_for_timeout(300)
+        page.screenshot(path=str(OUT / "27-medico-agenda-wa.png"), full_page=True)
         # mobile
         m = b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1, is_mobile=True)
         mp = m.new_page()
@@ -77,6 +90,14 @@ try:
         mp.screenshot(path=str(OUT / "30-mobile-agenda.png"), full_page=True)
         mp.goto(base + "#/caja"); mp.wait_for_timeout(300)
         mp.screenshot(path=str(OUT / "31-mobile-caja.png"), full_page=True)
+        mp.goto(base + "#/conversaciones"); mp.wait_for_timeout(300)
+        mp.screenshot(path=str(OUT / "32-mobile-conversaciones.png"), full_page=True)
+        mp.click("[data-action=logout]"); mp.wait_for_timeout(200)
+        mp.click("[data-action=login][data-rol=admin]"); mp.wait_for_timeout(300)
+        mp.goto(base + "#/tablero"); mp.wait_for_timeout(300)
+        mp.screenshot(path=str(OUT / "33-mobile-tablero.png"), full_page=True)
+        mp.goto(base + "#/accesos"); mp.wait_for_timeout(300)
+        mp.screenshot(path=str(OUT / "34-mobile-accesos.png"), full_page=True)
         b.close()
 finally:
     srv.terminate()

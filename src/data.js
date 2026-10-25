@@ -174,3 +174,26 @@ const RESUMEN_OBRAS_MES = [
   {obra:'Sancor Salud',  turnos:57,  copagos:795000,  ordenes:57},
   {obra:'Particular',    turnos:73,  copagos:3105000, ordenes:0},
 ];
+
+/* Conversaciones del sistema de atención (ficticias). estado: asistente | derivada | respondida */
+const CONVERSACIONES = [
+  {id:'cv1', dni:'29876543', canal:'whatsapp', hora:'16:48', estado:'derivada', motivo:'Pidió hablar con una persona',
+   mensajes:[['p','Hola, quiero cambiar el turno de mi mamá Teresa para la semana que viene, pero ella necesita que sea a la mañana y que la atienda la misma doctora'],['a','Entiendo. La Dra. Méndez atiende a la mañana los martes y jueves. Tengo martes 3/11 a las 9:20 y jueves 5/11 a las 10:00. Le sirve alguno?'],['p','Prefiero hablar con alguien porque también tiene que hacerse el holter y no sé si se puede el mismo día'],['a','Perfecto, le paso con recepción para coordinar las dos cosas juntas. Le responden en menos de 15 minutos.']]},
+  {id:'cv2', dni:'22333111', canal:'web', hora:'16:21', estado:'derivada', motivo:'Consulta sobre la seña',
+   mensajes:[['p','Reservé por la página para las 18 y me pidió seña. Si no llego a tiempo la pierdo?'],['a','La seña se descuenta del valor de la consulta. Si avisa con 24 horas, se reprograma y la seña se mantiene. Quiere que le confirme el turno de hoy o prefiere moverlo?'],['p','Quiero que me lo confirme una persona, es la primera vez que vengo'],['a','Claro, recepción le confirma por acá en unos minutos.']]},
+  {id:'cv3', dni:'16998877', canal:'whatsapp', hora:'15:10', estado:'respondida', motivo:'Preguntó si el informe estaba listo',
+   mensajes:[['p','Buenas, está listo el informe del holter que me hice la semana pasada?'],['a','Hola Héctor. El informe todavía no está firmado. Cuando esté listo le llega por acá un enlace para verlo con su DNI. Hoy tiene turno a las 17:00 con la Dra. Méndez, se lo recuerdo.'],['p','Gracias, lo espero'],['r','Héctor, le confirmo que la doctora lo informa hoy en su consulta. Lo esperamos a las 17.']]},
+  {id:'cv4', dni:'36555444', canal:'instagram', hora:'14:12', estado:'asistente', motivo:'Turno agendado por el asistente',
+   mensajes:[['p','Hola, necesito un turno con cardiólogo, tengo OSDE'],['a','Hola! Para una primera consulta con cardiología tengo hoy 17:40 con la Dra. Méndez o mañana 9:00 con el Dr. Ruiz. Me pasa su DNI para reservar?'],['p','36555444, hoy 17:40 está bien'],['a','Listo, Matías. Turno confirmado para hoy 17:40 con la Dra. Méndez en Cordis. Traiga su credencial de OSDE y el DNI. Le mando un recordatorio dos horas antes.']]},
+  {id:'cv5', dni:'8765432', canal:'whatsapp', hora:'11:35', estado:'asistente', motivo:'Preparación para el estudio',
+   mensajes:[['p','mañana tengo la ergometria que tengo q llevar'],['a','Hola Luis. Para la ergometría de mañana a las 17:30: ropa cómoda y zapatillas, una toalla chica, desayuno liviano y la medicación de siempre, salvo que su médico le haya indicado suspenderla. Traiga la credencial de PAMI y la orden.'],['p','ok gracias']]},
+  {id:'cv6', dni:'6543210', canal:'whatsapp', hora:'10:02', estado:'asistente', motivo:'Recordatorio confirmado por la hija',
+   mensajes:[['a','Hola Marcela. Le recordamos el turno de Elena Burgos mañana 17:00 para ergometría en Cordis. Responda 1 para confirmar o 2 para reprogramar.'],['p','1'],['a','Confirmado. Gracias!']]},
+];
+
+const METRICAS_ATENCION = {
+  mes:'octubre', conversaciones:1240, resueltas:92, turnosAsistente:612, turnosWeb:118, derivadas:97, tiempoRespuesta:'14 s',
+  canales:[['WhatsApp',78],['Web',15],['Instagram y Facebook',7]],
+  embudo:[['Escribieron',1240],['Pidieron turno',760],['Reservaron',612],['Asistieron',551]],
+  ausentismo:9.9, fueraHorario:31,
+};
