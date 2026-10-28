@@ -79,8 +79,12 @@
   const ORIGEN_CORTO = { whatsapp: 'WhatsApp', web: 'Web', recepcion: 'Recepción' };
   const origenIcon = (t) => { const o = ORIGEN[t.origen] || ORIGEN.recepcion; return `<span class="nowrap" title="${o[1]}"><i class="ti ${o[0]}" aria-hidden="true"></i> ${ORIGEN_CORTO[t.origen] || 'Recepción'}</span>`; };
 
-  function segProfesionales(current, action, incluirTodos) {
-    const items = PROFESIONALES.map((p) => { const n = turnosProfHoy(p.id).length; return `<button class="${current === p.id ? 'on' : ''}" data-action="${action}" data-id="${p.id}">${esc(p.corto)} <span class="n">${n}</span></button>`; });
+  const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const profesionalesFiltrados = (q) => { const k = norm(q).trim(); return k ? PROFESIONALES.filter((p) => norm(p.nombre + ' ' + p.corto + ' ' + p.esp).includes(k)) : PROFESIONALES; };
+  function segProfesionales(current, action, fechaKey, q) {
+    const lista = profesionalesFiltrados(q);
+    if (!lista.length) return `<div class="seg" role="tablist"><span class="small muted" style="padding:6px 10px">Ningún profesional coincide con "${esc(q)}"</span></div>`;
+    const items = lista.map((p) => { const n = turnosDe(fechaKey || HOY_KEY, p.id).length; return `<button class="${current === p.id ? 'on' : ''}" data-action="${action}" data-id="${p.id}">${esc(p.corto)} <span class="n">${n}</span></button>`; });
     return `<div class="seg" role="tablist">${items.join('')}</div>`;
   }
 
@@ -105,7 +109,7 @@
     const r = S.rol; const items = [];
     const derivadas = CONVERSACIONES.filter((c) => c.estado === 'derivada').length;
     if (r === 'medico') { items.push(['agenda', 'ti-calendar', 'Mi agenda']); items.push(['pacientes', 'ti-users', 'Pacientes']); const pend = S.estudios.filter((e) => e.estado === 'realizado').length; items.push(['informes', 'ti-file-text', 'Informes', pend]); }
-    else { if (r === 'admin') items.push(['tablero', 'ti-chart-bar', 'Tablero']); items.push(['agenda', 'ti-calendar', 'Agenda del día']); items.push(['caja', 'ti-cash', 'Caja y rendición']); items.push(['rendiciones', 'ti-report-money', 'Rendiciones']); items.push(['pacientes', 'ti-users', 'Pacientes']); items.push(['conversaciones', 'ti-brand-whatsapp', 'Conversaciones', derivadas]); }
+    else { if (r === 'admin') items.push(['tablero', 'ti-chart-bar', 'Tablero']); items.push(['agenda', 'ti-calendar', 'Agenda']); items.push(['caja', 'ti-cash', 'Caja y rendición']); items.push(['rendiciones', 'ti-report-money', 'Rendiciones']); items.push(['pacientes', 'ti-users', 'Pacientes']); items.push(['conversaciones', 'ti-brand-whatsapp', 'Conversaciones', derivadas]); }
     if (r === 'admin') { items.push(['importacion', 'ti-database-import', 'Importación']); items.push(['config', 'ti-settings', 'Configuración']); items.push(['accesos', 'ti-layout-sidebar', 'Panel y accesos']); }
     return items;
   }
@@ -132,42 +136,151 @@
       </div></div>`;
   }
 
-  /* ---------- agenda ---------- */
-  function agendaView() {
-    const p = S.rol === 'medico' ? 'pm' : S.ui.prof;
-    const pr = prof(p); const ts = turnosProfHoy(p);
-    const total = S.turnos.length, atendidos = S.turnos.filter((t) => t.estado === 'atendido').length, espera = S.turnos.filter((t) => t.estado === 'llego').length;
-    const sub = S.rol === 'medico' ? `${ts.length} turnos hoy · ${ts.filter((t) => t.estado === 'atendido').length} atendidos` : `${total} turnos en el centro · ${atendidos} atendidos · ${espera} en espera`;
-    const seg = S.rol === 'medico' ? '' : segProfesionales(p, 'seg-prof');
-    let rows = ts.map(agendaRow).join('');
-    if (!ts.length) rows = `<tr><td colspan="8" class="muted" style="padding:28px;text-align:center">Sin turnos hoy.${pr.nota ? ' ' + esc(pr.nota) : ''}</td></tr>`;
-    const body = `
-      ${seg ? `<div class="mb">${seg}</div>` : ''}
-      <div class="panel tight">
-        <div class="head"><div><h2>${esc(pr.nombre)}</h2><div class="small muted">${esc(pr.esp)} · turnos de ${pr.dur} min${pr.gcal ? ' · bloqueos desde Google Calendar' : ''}</div></div>
+  /* ---------- agenda: turnos de cualquier día (hoy viene de los datos; el resto se genera de forma estable) ---------- */
+  const HORARIOS = { pm: { dias: [1, 2, 3, 4, 5], desde: '15:00', hasta: '18:20', lleno: .85 }, pr: { dias: [1, 2, 3, 4, 5], desde: '09:00', hasta: '11:20', lleno: .75 },
+    ps: { dias: [2, 4], desde: '09:00', hasta: '12:00', lleno: .9 }, erg: { dias: [1, 3, 5], desde: '15:30', hasta: '18:00', lleno: .8 }, hol: { dias: [2, 4], desde: '08:00', hasta: '09:15', lleno: .7 } };
+  const toMin = (hm) => { const [h, m] = hm.split(':').map(Number); return h * 60 + m; };
+  const hm = (min) => pad(Math.floor(min / 60)) + ':' + pad(min % 60);
+  const keyToDate = (key) => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d || 1); };
+  const addDays = (key, n) => { const d = keyToDate(key); d.setDate(d.getDate() + n); return ymd(d); };
+  function rng(seed) { let h = 2166136261; for (let i = 0; i < seed.length; i++) { h ^= seed.charCodeAt(i); h = Math.imul(h, 16777619); } return () => { h += 0x6D2B79F5; let t = Math.imul(h ^ (h >>> 15), 1 | h); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+  const GEN = {};
+  function generarTurnos(fecha, p) {
+    const k = fecha + '|' + p; if (GEN[k]) return GEN[k];
+    const h = HORARIOS[p]; const d = keyToDate(fecha); const out = [];
+    if (!h || !h.dias.includes(d.getDay())) return (GEN[k] = out);
+    const pr = prof(p); const r = rng(k); const pasado = fecha < HOY_KEY; const dias = Math.round((keyToDate(fecha) - keyToDate(HOY_KEY)) / 86400000);
+    const usados = new Set();
+    for (let m = toMin(h.desde); m < toMin(h.hasta); m += pr.dur) {
+      if (r() > h.lleno) continue;
+      let pi = Math.floor(r() * PACIENTES.length); let g = 0; while (usados.has(pi) && g++ < 16) pi = (pi + 1) % PACIENTES.length; usados.add(pi);
+      const pa = PACIENTES[pi]; const x = r();
+      const tipo = pr.estudio ? (p === 'hol' ? (x < .5 ? 'Holter: colocación' : 'Holter: retiro') : pr.nombre) : (p === 'pr' && x < .2 ? 'Ecocardiograma' : x < .35 ? 'Primera consulta' : x < .55 ? 'Control' : 'Consulta');
+      const y = r(); const origen = y < .55 ? 'whatsapp' : y < .75 ? 'web' : 'recepcion';
+      const t = { id: 'g-' + p + '-' + fecha + '-' + hm(m), prof: p, dni: pa.dni, hora: hm(m), tipo, origen, fecha, nuevo: tipo === 'Primera consulta' };
+      if (pasado) {
+        if (r() < .08) t.estado = 'novino';
+        else { t.estado = 'atendido'; t.llego = hm(m - 3 - Math.floor(r() * 10)); t.entro = hm(m + Math.floor(r() * 8)); t.salio = hm(toMin(t.entro) + pr.dur - 4 + Math.floor(r() * 8));
+          const o = obra(pa.obra); const cop = pr.estudio ? o.copagoEstudio : o.copago; const lineas = [];
+          if (o.orden) lineas.push({ medio: 'orden', importe: 0, ref: o.nombre + ' ' + (1000 + Math.floor(r() * 9000)) });
+          if (cop > 0) lineas.push({ medio: r() < .6 ? 'efectivo' : r() < .5 ? 'transferencia' : 'debito', importe: cop, ref: '' });
+          t.cobroDemo = lineas; }
+      } else {
+        const pc = dias <= 2 ? .8 : dias <= 7 ? .5 : .2; t.estado = r() < pc ? 'confirmado' : 'solicitado';
+        if (origen === 'web' && pa.obra === 'part' && r() < .6) t.sena = 10000;
+      }
+      out.push(t);
+    }
+    return (GEN[k] = out);
+  }
+  const turnosDe = (fecha, p) => (fecha === HOY_KEY ? turnosProfHoy(p) : generarTurnos(fecha, p));
+  const libresDe = (fecha, p) => { const h = HORARIOS[p]; const d = keyToDate(fecha); if (!h || !h.dias.includes(d.getDay())) return 0; return Math.floor((toMin(h.hasta) - toMin(h.desde)) / prof(p).dur) - turnosDe(fecha, p).length; };
+  const chev = (dir) => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="${dir === 'l' ? 'm15 6-6 6 6 6' : 'm9 6 6 6-6 6'}"/></svg>`;
+  const lunesDe = (key) => { const d = keyToDate(key); const off = (d.getDay() + 6) % 7; d.setDate(d.getDate() - off); return ymd(d); };
+  const mesKeyDe = (key) => key.slice(0, 7);
+
+  /* ---------- agenda: vistas día / semana / mes ---------- */
+  function agendaView(vista, fecha) {
+    vista = ['dia', 'semana', 'mes'].includes(vista) ? vista : 'dia';
+    fecha = vista === 'mes' ? ((fecha && /^\d{4}-\d{2}$/.test(fecha)) ? fecha + '-01' : (fecha && /^\d{4}-\d{2}-\d{2}$/.test(fecha) ? fecha.slice(0, 7) + '-01' : HOY_KEY.slice(0, 7) + '-01')) : ((fecha && /^\d{4}-\d{2}-\d{2}$/.test(fecha)) ? fecha : HOY_KEY);
+    const q = S.ui.busca || ''; const lista = profesionalesFiltrados(q);
+    let p = S.rol === 'medico' ? 'pm' : S.ui.prof; if (S.rol !== 'medico' && lista.length && !lista.some((x) => x.id === p)) p = lista[0].id;
+    const pr = prof(p);
+    const esHoy = vista === 'dia' && fecha === HOY_KEY;
+    const d = keyToDate(fecha);
+    const etiqueta = vista === 'dia' ? (esHoy ? `Hoy, ${fechaLarga(d)}` : `${fechaLarga(d)} de ${d.getFullYear()}`)
+      : vista === 'semana' ? (() => { const a = keyToDate(lunesDe(fecha)); const b = new Date(a); b.setDate(a.getDate() + 5); return `Semana del ${a.getDate()} ${MESES[a.getMonth()].slice(0, 3)} al ${b.getDate()} ${MESES[b.getMonth()].slice(0, 3)} ${b.getFullYear()}`; })()
+      : `${MESES[d.getMonth()][0].toUpperCase() + MESES[d.getMonth()].slice(1)} ${d.getFullYear()}`;
+    const linkA = (v, f) => `#/agenda/${v}/${v === 'mes' ? mesKeyDe(f) : f}`;
+    const prev = vista === 'dia' ? addDays(fecha, -1) : vista === 'semana' ? addDays(fecha, -7) : ymd(new Date(d.getFullYear(), d.getMonth() - 1, 1));
+    const next = vista === 'dia' ? addDays(fecha, 1) : vista === 'semana' ? addDays(fecha, 7) : ymd(new Date(d.getFullYear(), d.getMonth() + 1, 1));
+    const barra = `<div class="agenda-bar">
+        <div class="seg vistas"><a href="${linkA('dia', fecha)}" class="${vista === 'dia' ? 'on' : ''}">Día</a><a href="${linkA('semana', fecha)}" class="${vista === 'semana' ? 'on' : ''}">Semana</a><a href="${linkA('mes', fecha)}" class="${vista === 'mes' ? 'on' : ''}">Mes</a></div>
+        <div class="nav-fecha"><a class="btn sm ghost icon" href="${linkA(vista, prev)}" aria-label="Anterior">${chev('l')}</a><a class="btn sm" href="${linkA(vista, HOY_KEY)}">Hoy</a><a class="btn sm ghost icon" href="${linkA(vista, next)}" aria-label="Siguiente">${chev('r')}</a><span class="etiqueta">${etiqueta}</span></div>
+        ${S.rol === 'medico' ? '' : `<label class="search"><svg class="lupa" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="busca-prof" class="input" placeholder="Buscar profesional o especialidad" value="${esc(q)}" autocomplete="off">${q ? '<button class="btn sm ghost icon" data-action="busca-limpiar" aria-label="Limpiar"><i class="ti ti-x"></i></button>' : ''}</label>`}
+      </div>
+      ${S.rol === 'medico' ? '' : `<div class="mb" id="prof-tabs">${segProfesionales(p, 'seg-prof', vista === 'dia' ? fecha : HOY_KEY, q)}</div>`}`;
+    let body, sub;
+    if (!pr || (S.rol !== 'medico' && !lista.length)) { body = barra + `<div class="panel muted" style="padding:28px;text-align:center">Ningún profesional coincide con la búsqueda. ${q ? 'Borrala para ver todas las agendas.' : ''}</div>`; sub = ''; }
+    else if (vista === 'dia') { const r = diaView(p, fecha, esHoy); body = barra + r.html; sub = r.sub; }
+    else if (vista === 'semana') { const r = semanaView(p, fecha); body = barra + r.html; sub = r.sub; }
+    else { const r = mesView(p, fecha); body = barra + r.html; sub = r.sub; }
+    return shell('agenda', S.rol === 'medico' ? 'Mi agenda' : 'Agenda', sub, body);
+  }
+
+  function diaView(p, fecha, esHoy) {
+    const pr = prof(p); const ts = turnosDe(fecha, p); const pasado = fecha < HOY_KEY;
+    const todos = esHoy ? S.turnos : PROFESIONALES.flatMap((x) => turnosDe(fecha, x.id));
+    const atendidos = todos.filter((t) => t.estado === 'atendido').length, espera = todos.filter((t) => t.estado === 'llego').length, novino = todos.filter((t) => t.estado === 'novino').length;
+    const sub = S.rol === 'medico' ? `${ts.length} turnos · ${esHoy || pasado ? ts.filter((t) => t.estado === 'atendido').length + ' atendidos' : libresDe(fecha, p) + ' horarios libres'}`
+      : esHoy ? `${todos.length} turnos en el centro · ${atendidos} atendidos · ${espera} en espera` : pasado ? `${todos.length} turnos en el centro · ${atendidos} atendidos · ${novino} no vinieron` : `${todos.length} turnos en el centro · ${PROFESIONALES.reduce((a, x) => a + libresDe(fecha, x.id), 0)} horarios libres`;
+    let rows = ts.map((t) => agendaRow(t, { hoy: esHoy, pasado })).join('');
+    if (!ts.length) rows = `<tr><td colspan="8" class="muted" style="padding:28px;text-align:center">${HORARIOS[p] && HORARIOS[p].dias.includes(keyToDate(fecha).getDay()) ? 'Sin turnos este día.' : 'No atiende este día.'}${pr.nota ? ' ' + esc(pr.nota) : ''}</td></tr>`;
+    const html = `<div class="panel tight">
+        <div class="head"><div><h2>${esc(pr.nombre)}</h2><div class="small muted">${esc(pr.esp)} · turnos de ${pr.dur} min${pr.gcal ? ' · bloqueos desde Google Calendar' : ''}${!esHoy && !pasado ? ` · ${libresDe(fecha, p)} horarios libres` : ''}</div></div>
           <div class="row"><button class="btn sm" data-action="nuevo-turno"><i class="ti ti-plus"></i>Agregar turno</button><button class="btn sm" data-action="bloquear"><i class="ti ti-lock"></i>Bloquear horario</button></div></div>
         <div class="table-wrap"><table class="tbl">
           <thead><tr><th>Hora</th><th>Paciente</th><th>Tipo</th><th>Estado</th><th>Llegó</th><th>Entró</th><th>Cobro</th><th></th></tr></thead>
           <tbody>${rows}</tbody></table></div>
       </div>
-      ${S.rol === 'medico' ? resumenDiaWA(p, ts) : ''}
+      ${S.rol === 'medico' && esHoy ? resumenDiaWA(p, ts) : ''}
       <div class="row mt small muted" style="gap:16px"><span>${pill('solicitado')} reservó y no confirmó</span><span>${pill('confirmado')} confirmó por WhatsApp</span><span>${pill('llego')} llegó al centro</span><span>${pill('atencion')} con el profesional</span><span>${pill('atendido')}</span><span>${pill('novino')} dispara el recupero automático</span></div>`;
-    return shell('agenda', S.rol === 'medico' ? 'Mi agenda' : 'Agenda del día', sub, body);
+    return { html, sub };
   }
-  function agendaRow(t) {
+
+  function semanaView(p, fecha) {
+    const pr = prof(p); const lunes = lunesDe(fecha); const dias = [0, 1, 2, 3, 4, 5].map((i) => addDays(lunes, i));
+    let total = 0, libres = 0;
+    const cols = dias.map((k) => {
+      const d = keyToDate(k); const ts = turnosDe(k, p); const atiende = HORARIOS[p] && HORARIOS[p].dias.includes(d.getDay()); const l = libresDe(k, p); total += ts.length; if (k >= HOY_KEY) libres += l;
+      const cards = ts.map((t) => { const pa = pac(t.dni); return `<a href="#/pacientes/${pa.dni}" class="wk-card st-${t.estado}" title="${esc(nombrePac(pa))} · ${esc(t.tipo)} · ${ESTADOS[t.estado]}"><b>${t.hora}</b><span>${esc(pa.apellido)}</span><em>${esc(t.tipo)}</em></a>`; }).join('');
+      const pie = !atiende ? '<div class="wk-libre muted">No atiende</div>' : k < HOY_KEY ? `<div class="wk-libre muted">${ts.filter((t) => t.estado === 'novino').length ? ts.filter((t) => t.estado === 'novino').length + ' no vino' : 'Todo atendido'}</div>` : `<div class="wk-libre">${l} ${l === 1 ? 'horario libre' : 'horarios libres'}</div>`;
+      return `<div class="wk-col ${k === HOY_KEY ? 'hoy' : ''} ${!atiende ? 'off' : ''}"><a href="#/agenda/dia/${k}" class="wk-head"><b>${DIAS[d.getDay()].slice(0, 3)} ${d.getDate()}</b><span>${ts.length ? ts.length + ' turnos' : ''}</span></a><div class="wk-body">${cards}${pie}</div></div>`;
+    }).join('');
+    const html = `<div class="panel tight"><div class="head"><div><h2>${esc(pr.nombre)}</h2><div class="small muted">${esc(pr.esp)} · turnos de ${pr.dur} min · tocá un día para abrirlo</div></div>
+        <div class="row"><button class="btn sm" data-action="nuevo-turno"><i class="ti ti-plus"></i>Agregar turno</button><button class="btn sm" data-action="bloquear"><i class="ti ti-lock"></i>Bloquear horario</button></div></div>
+      <div class="wk">${cols}</div></div>
+      <div class="row mt small muted" style="gap:16px"><span><i class="wk-dot st-atendido"></i> atendido</span><span><i class="wk-dot st-novino"></i> no vino</span><span><i class="wk-dot st-confirmado"></i> confirmado</span><span><i class="wk-dot st-solicitado"></i> sin confirmar</span><span><i class="wk-dot st-llego"></i> en espera o en atención</span></div>`;
+    return { html, sub: `${total} turnos en la semana${libres ? ` · ${libres} horarios libres en los días que quedan` : ''}` };
+  }
+
+  function mesView(p, fecha) {
+    const pr = prof(p); const d = keyToDate(fecha); const y = d.getFullYear(), m = d.getMonth();
+    const primero = new Date(y, m, 1); const inicio = lunesDe(ymd(primero)); const celdas = []; let total = 0, novinos = 0, libres = 0;
+    for (let i = 0; i < 42; i++) {
+      const k = addDays(inicio, i); const dd = keyToDate(k); const enMes = dd.getMonth() === m;
+      if (i >= 35 && !enMes) break;
+      const ts = enMes ? turnosDe(k, p) : []; const atiende = HORARIOS[p] && HORARIOS[p].dias.includes(dd.getDay()); const nv = ts.filter((t) => t.estado === 'novino').length; const l = enMes && k >= HOY_KEY ? libresDe(k, p) : 0;
+      if (enMes) { total += ts.length; novinos += nv; libres += l; }
+      const cuerpo = !enMes ? '' : !atiende ? '<span class="mes-off">—</span>' : `<span class="mes-n"><b>${ts.length}</b><i> ${ts.length === 1 ? 'turno' : 'turnos'}</i></span>${k < HOY_KEY ? (nv ? `<span class="mes-nv"><b>${nv}</b><i> no vino</i></span>` : '<span class="mes-ok"><i>atendido</i></span>') : k === HOY_KEY ? `<span class="mes-ok"><b>${ts.filter((t) => t.estado === 'atendido').length}</b><i> atendidos</i></span>` : `<span class="mes-libre"><b>${l}</b><i> libres</i></span>`}`;
+      celdas.push(enMes ? `<a href="#/agenda/dia/${k}" class="mes-cell ${k === HOY_KEY ? 'hoy' : ''} ${!atiende ? 'off' : ''}"><span class="mes-d">${dd.getDate()}</span>${cuerpo}</a>` : `<div class="mes-cell fuera"><span class="mes-d">${dd.getDate()}</span></div>`);
+    }
+    const cab = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'].map((x) => `<div class="mes-cab">${x}</div>`).join('');
+    const html = `<div class="panel tight"><div class="head"><div><h2>${esc(pr.nombre)}</h2><div class="small muted">${esc(pr.esp)} · tocá un día para abrirlo${pr.nota ? ' · ' + esc(pr.nota) : ''}</div></div>
+        <div class="row"><button class="btn sm" data-action="bloquear"><i class="ti ti-lock"></i>Bloquear días</button></div></div>
+      <div class="mes">${cab}${celdas.join('')}</div></div>
+      <div class="row mt small muted" style="gap:16px"><span><b class="mes-n">número</b> turnos del día</span><span class="mes-nv">rojo: no vinieron</span><span class="mes-ok">verde: atendidos</span><span class="mes-libre">turquesa: horarios libres</span></div>`;
+    return { html, sub: `${total} turnos en el mes · ${novinos} no vinieron${libres ? ` · ${libres} horarios libres de acá en adelante` : ''}` };
+  }
+
+  function agendaRow(t, ctx) {
+    ctx = ctx || { hoy: true, pasado: false };
     const p = pac(t.dni); const o = obra(p.obra); const c = cobroDe(t.id);
     let cobro = '';
     if (c) cobro = `<div class="num" style="font-weight:500">${montoCobro(c)}</div><div>${chipsCobro(c)}</div>`;
+    else if (t.cobroDemo) { const tt = totales([{ lineas: t.cobroDemo }]); cobro = `<div class="num" style="font-weight:500">${tt.total ? fmt(tt.total) : '<span class="muted" style="font-weight:400">Sin cargo</span>'}</div><div>${t.cobroDemo.map(chipMedio).join('')}</div>`; }
     else if (t.sena) cobro = `<span class="chip mp">Seña MP ${fmt(t.sena)}</span><span class="tiny muted"> cobrada al reservar</span>`;
     else if (t.estado === 'novino') cobro = `<span class="faint">—</span>`;
-    else cobro = `<span class="muted small">Pendiente</span>`;
+    else cobro = `<span class="muted small">${ctx.hoy ? 'Pendiente' : 'Se cobra al llegar'}</span>`;
     const acciones = [];
     const puedeCobrar = S.rol !== 'medico';
-    if (['solicitado', 'confirmado'].includes(t.estado) && puedeCobrar) { acciones.push(btn('llego', t.id, 'Llegó', 'teal')); acciones.push(btn('novino', t.id, 'No vino', 'danger')); acciones.push(btn('reprogramar', t.id, 'Reprogramar')); }
-    if (t.estado === 'llego') { acciones.push(btn('entro', t.id, 'Entró', 'teal')); if (puedeCobrar && !c) acciones.push(btn('cobrar', t.id, 'Cobrar', 'primary')); }
-    if (t.estado === 'atencion') { acciones.push(btn('atendido', t.id, 'Atendido', 'teal')); if (puedeCobrar && !c) acciones.push(btn('cobrar', t.id, 'Cobrar', 'primary')); }
-    if (t.estado === 'atendido' && puedeCobrar) { acciones.push(c ? btn('ver-cobro', c.id, 'Ver cobro') : btn('cobrar', t.id, 'Cobrar', 'primary')); }
-    if (t.estado === 'novino' && puedeCobrar) acciones.push(btn('reprogramar', t.id, 'Reprogramar'));
+    if (ctx.hoy) {
+      if (['solicitado', 'confirmado'].includes(t.estado) && puedeCobrar) { acciones.push(btn('llego', t.id, 'Llegó', 'teal')); acciones.push(btn('novino', t.id, 'No vino', 'danger')); acciones.push(btn('reprogramar', t.id, 'Reprogramar')); }
+      if (t.estado === 'llego') { acciones.push(btn('entro', t.id, 'Entró', 'teal')); if (puedeCobrar && !c) acciones.push(btn('cobrar', t.id, 'Cobrar', 'primary')); }
+      if (t.estado === 'atencion') { acciones.push(btn('atendido', t.id, 'Atendido', 'teal')); if (puedeCobrar && !c) acciones.push(btn('cobrar', t.id, 'Cobrar', 'primary')); }
+      if (t.estado === 'atendido' && puedeCobrar) { acciones.push(c ? btn('ver-cobro', c.id, 'Ver cobro') : btn('cobrar', t.id, 'Cobrar', 'primary')); }
+      if (t.estado === 'novino' && puedeCobrar) acciones.push(btn('reprogramar', t.id, 'Reprogramar'));
+    } else if (!ctx.pasado && puedeCobrar) { acciones.push(btn('reprogramar', t.id, 'Reprogramar')); acciones.push(btn('cancelar', t.id, 'Cancelar', 'danger')); }
     if (S.rol === 'medico') acciones.push(`<a class="btn sm" href="#/pacientes/${p.dni}/historia"><i class="ti ti-notes"></i>Historia</a>`);
     const dim = t.estado === 'novino' ? ' class="dim"' : '';
     return `<tr${dim}>
@@ -275,7 +388,7 @@
     const acciones = `<div class="row mt no-print" style="justify-content:flex-end">${acc.join('')}</div>`;
     const rows = cobros.slice().sort((a, b) => a.hora.localeCompare(b.hora)).map((c) => { const t = turno(c.turno); const pa = pac(c.dni); return `<tr><td class="num">${c.hora}</td><td>${linkPac(pa)}<span class="sub">turno ${t.hora} · ${esc(t.tipo)}</span></td><td>${chipsCobro(c)}</td><td class="amt" style="font-weight:500">${montoCobro(c)}</td><td class="actions"><button class="btn xs ghost" data-action="ver-cobro" data-id="${c.id}">Ver</button></td></tr>`; }).join('');
     const pendientes = ts.filter((t) => ['llego', 'atencion', 'atendido'].includes(t.estado) && !cobroDe(t.id));
-    const body = `<div class="mb">${segProfesionales(p, 'seg-caja')}</div>
+    const body = `<div class="mb">${segProfesionales(p, 'seg-caja', HOY_KEY)}</div>
       <div class="two">
         <div>${receiptHTML(p, cobros, rend, ts, { acciones })}
           ${estado !== 'abierta' ? `<div class="note mt">Rendición cerrada. Si entra un cobro después del cierre, queda en una rendición complementaria del mismo día.</div>` : ''}
@@ -553,7 +666,6 @@
       <div class="two halves"><div class="panel"><h3>Cobrado por medio de pago</h3><div class="mt">${medios}</div></div><div class="panel"><h3>Espera promedio hoy (llegó → entró)</h3><div class="mt">${esperaBars || '<span class="muted small">Sin datos todavía</span>'}</div><div class="tiny muted mt">Minutos. Sale de los botones Llegó y Entró de la agenda.</div></div></div>`;
     return shell('tablero', 'Tablero', `Lo que pasa con la atención y con la caja, en una sola pantalla`, body);
   }
-  const toMin = (hm) => { const [h, m] = hm.split(':').map(Number); return h * 60 + m; };
 
   /* ---------- panel y accesos (dirección) ---------- */
   function accesosView() {
@@ -587,7 +699,7 @@
     const allowed = navItems().map((x) => x[0]);
     let name = r.name || 'agenda'; if (!allowed.includes(name)) name = 'agenda';
     let html = '';
-    if (name === 'agenda') html = agendaView();
+    if (name === 'agenda') html = agendaView(r.parts[1], r.parts[2]);
     else if (name === 'caja') html = cajaView();
     else if (name === 'rendiciones') html = rendicionesView();
     else if (name === 'pacientes') html = r.parts[1] ? pacienteView(r.parts[1], r.parts[2]) : pacientesView();
@@ -599,6 +711,7 @@
     else if (name === 'accesos') html = accesosView();
     app.innerHTML = html;
     if (name === 'pacientes' && !r.parts[1]) { const q = $('#q'); if (q && S.ui.qFocus) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
+    if (name === 'agenda') { const b = $('#busca-prof'); if (b && S.ui.buscaFocus) { b.focus(); b.setSelectionRange(b.value.length, b.value.length); } }
     window.scrollTo(0, 0);
   }
 
@@ -618,6 +731,8 @@
     if (a === 'entro') { const t = turno(id); t.estado = 'atencion'; t.entro = ahoraHM(); save(); render(); return; }
     if (a === 'atendido') { const t = turno(id); t.estado = 'atendido'; t.salio = ahoraHM(); save(); render(); toast('Turno atendido', 'Se sincroniza con el sistema de atención: sale la encuesta y queda programado el recordatorio de control.'); return; }
     if (a === 'novino') { const t = turno(id); t.estado = 'novino'; save(); render(); toast('Marcado como no vino', 'El sistema de atención le escribe en 3 días para ofrecerle un turno nuevo.'); return; }
+    if (a === 'busca-limpiar') { S.ui.busca = ''; save(); render(); return; }
+    if (a === 'cancelar') { toast('Cancelar turno', 'El paciente recibe el aviso por WhatsApp y el horario vuelve a ofrecerse al instante.'); return; }
     if (a === 'reprogramar') { toast('Reprogramar', 'Abre el calendario del profesional con los horarios libres; el paciente recibe la confirmación por WhatsApp.'); return; }
     if (a === 'nuevo-turno' || a === 'bloquear') { toast(a === 'bloquear' ? 'Bloquear horario' : 'Agregar turno', 'Se hace sobre la misma agenda que usa el asistente: el horario deja de ofrecerse al instante.'); return; }
     if (a === 'cobrar') { abrirCobro(id); return; }
@@ -654,6 +769,7 @@
     const el = ev.target;
     if (el.closest && el.closest('#lineas')) { if (el.name === 'medio') { refrescarCobro(); } else if (el.name === 'importe') { COBRO.lineas = leerLineas(); $('#cobro-total').textContent = fmt(totales([COBRO]).total); } return; }
     if (el.id === 'q') { S.ui.q = el.value; S.ui.qFocus = true; save(); render(); S.ui.qFocus = false; }
+    if (el.id === 'busca-prof') { S.ui.busca = el.value; const l = profesionalesFiltrados(el.value); if (l.length && !l.some((x) => x.id === S.ui.prof)) S.ui.prof = l[0].id; S.ui.buscaFocus = true; save(); render(); S.ui.buscaFocus = false; }
   });
   document.addEventListener('change', (ev) => { const el = ev.target; if (el.dataset && el.dataset.action === 'rend-filtro') { S.ui.rendProf = el.value; save(); render(); } });
   document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeModal(); if (ev.key === 'Enter' && ev.target.dataset && ev.target.dataset.action === 'chat-input') { const b = $('[data-action=chat-send]'); if (b) b.click(); } if (ev.key === 'Enter' && ev.target.id === 'portal-dni') { const b = $('[data-action=portal-ok]'); if (b) b.click(); } });

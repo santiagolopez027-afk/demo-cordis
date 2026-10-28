@@ -15,3 +15,9 @@ Potenta AI · 2026
 - **Tablero** (dirección): métricas de atención (del sistema de atención) y de operación y caja (de este módulo) en una pantalla.
 - **Panel y accesos** (dirección): maqueta del menú del panel del sistema de atención tal como lo ve cada rol, tabla de quién usa qué y cómo se accede.
 - **Mi agenda** (profesional): tarjeta con el resumen del día que llega por WhatsApp a las 8:00; el profesional solo marca Entró / Atendido.
+
+## v3 (28/10/2026)
+
+- **Agenda por día, semana y mes**, con navegación entre fechas (anterior, hoy, siguiente). Las rutas son `#/agenda/dia/AAAA-MM-DD`, `#/agenda/semana/AAAA-MM-DD` y `#/agenda/mes/AAAA-MM`.
+- Los turnos de hoy salen de `data.js`; los de cualquier otro día se generan de forma estable (misma fecha, mismos turnos) según el horario de cada agenda (`HORARIOS` en `app.js`): días pasados atendidos o no vino, con su cobro; días futuros confirmados o sin confirmar, con horarios libres.
+- **Buscador de profesionales** (por nombre o especialidad) que filtra las pestañas de agendas; pensado para un centro con 40 agendas.
