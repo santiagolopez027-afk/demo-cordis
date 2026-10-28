@@ -338,6 +338,14 @@ a.mes-cell:hover{background:#F7F9FC}
 .mes-n{font-weight:500}.mes-cell i{font-style:normal}.mes-ok{color:var(--green)}.mes-nv{color:var(--red)}.mes-libre{color:var(--teal)}.mes-off{color:var(--line-2)}
 @media (max-width:980px){.wk{grid-template-columns:repeat(3,minmax(0,1fr))}.wk-col{min-height:200px;border-bottom:1px solid var(--line)}.mes-cell{min-height:64px;padding:6px;font-size:12px}.mes-cell i{display:none}.mes-cell .mes-ok:not(:has(b)){display:none}.search{min-width:0;max-width:none;margin-left:0;flex-basis:100%}}
 
+/* ---- v3.1: buscador en toda página con médicos o pacientes ---- */
+.head .search{margin-left:auto;flex:0 1 320px;min-width:200px}
+.search.first{margin-left:0;margin-right:auto}
+.search.full{margin-left:0;max-width:none;flex:1}
+.search .btn.icon{padding:4px 6px}
+.search .lupa{pointer-events:none}
+@media (max-width:980px){.head .search{flex-basis:100%}}
+
 </style>
 </head>
 <body>
@@ -631,6 +639,14 @@ const METRICAS_ATENCION = {
 
   const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const profesionalesFiltrados = (q) => { const k = norm(q).trim(); return k ? PROFESIONALES.filter((p) => norm(p.nombre + ' ' + p.corto + ' ' + p.esp).includes(k)) : PROFESIONALES; };
+  const bq = (key) => ((S.ui.b && S.ui.b[key]) || '');
+  const coincide = (q, ...campos) => { const k = norm(q).trim(); if (!k) return true; const kd = k.replace(/[.\s]/g, ''); return campos.some((c) => { const n = norm(c); return n.includes(k) || (kd && n.replace(/[.\s]/g, '').includes(kd)); }); };
+  const LUPA = '<svg class="lupa" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+  const CRUZ = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+  function buscador(key, placeholder, cls) {
+    const v = bq(key);
+    return `<label class="search ${cls || ''}">${LUPA}<input class="input buscador" data-key="${key}" placeholder="${esc(placeholder)}" value="${esc(v)}" autocomplete="off" aria-label="${esc(placeholder)}">${v ? `<button class="btn sm ghost icon" data-action="busca-limpiar" data-id="${key}" aria-label="Limpiar">${CRUZ}</button>` : ''}</label>`;
+  }
   function segProfesionales(current, action, fechaKey, q) {
     const lista = profesionalesFiltrados(q);
     if (!lista.length) return `<div class="seg" role="tablist"><span class="small muted" style="padding:6px 10px">Ningún profesional coincide con "${esc(q)}"</span></div>`;
@@ -705,7 +721,8 @@ const METRICAS_ATENCION = {
       if (r() > h.lleno) continue;
       let pi = Math.floor(r() * PACIENTES.length); let g = 0; while (usados.has(pi) && g++ < 16) pi = (pi + 1) % PACIENTES.length; usados.add(pi);
       const pa = PACIENTES[pi]; const x = r();
-      const tipo = pr.estudio ? (p === 'hol' ? (x < .5 ? 'Holter: colocación' : 'Holter: retiro') : pr.nombre) : (p === 'pr' && x < .2 ? 'Ecocardiograma' : x < .35 ? 'Primera consulta' : x < .55 ? 'Control' : 'Consulta');
+      let tipo = pr.estudio ? (p === 'hol' ? (x < .5 ? 'Holter: colocación' : 'Holter: retiro') : pr.nombre) : (p === 'pr' && x < .2 ? 'Ecocardiograma' : x < .35 ? 'Primera consulta' : x < .55 ? 'Control' : 'Consulta');
+      if (tipo === 'Primera consulta' && (pa.origen === 'importado' || fecha < HOY_KEY)) tipo = 'Consulta';
       const y = r(); const origen = y < .55 ? 'whatsapp' : y < .75 ? 'web' : 'recepcion';
       const t = { id: 'g-' + p + '-' + fecha + '-' + hm(m), prof: p, dni: pa.dni, hora: hm(m), tipo, origen, fecha, nuevo: tipo === 'Primera consulta' };
       if (pasado) {
@@ -733,7 +750,7 @@ const METRICAS_ATENCION = {
   function agendaView(vista, fecha) {
     vista = ['dia', 'semana', 'mes'].includes(vista) ? vista : 'dia';
     fecha = vista === 'mes' ? ((fecha && /^\d{4}-\d{2}$/.test(fecha)) ? fecha + '-01' : (fecha && /^\d{4}-\d{2}-\d{2}$/.test(fecha) ? fecha.slice(0, 7) + '-01' : HOY_KEY.slice(0, 7) + '-01')) : ((fecha && /^\d{4}-\d{2}-\d{2}$/.test(fecha)) ? fecha : HOY_KEY);
-    const q = S.ui.busca || ''; const lista = profesionalesFiltrados(q);
+    const q = bq('agenda'); const profMatch = profesionalesFiltrados(q); const filtraProf = !!q && profMatch.length > 0 && S.rol !== 'medico'; const lista = filtraProf ? profMatch : PROFESIONALES; const filtroPac = q && !filtraProf ? q : '';
     let p = S.rol === 'medico' ? 'pm' : S.ui.prof; if (S.rol !== 'medico' && lista.length && !lista.some((x) => x.id === p)) p = lista[0].id;
     const pr = prof(p);
     const esHoy = vista === 'dia' && fecha === HOY_KEY;
@@ -747,27 +764,28 @@ const METRICAS_ATENCION = {
     const barra = `<div class="agenda-bar">
         <div class="seg vistas"><a href="${linkA('dia', fecha)}" class="${vista === 'dia' ? 'on' : ''}">Día</a><a href="${linkA('semana', fecha)}" class="${vista === 'semana' ? 'on' : ''}">Semana</a><a href="${linkA('mes', fecha)}" class="${vista === 'mes' ? 'on' : ''}">Mes</a></div>
         <div class="nav-fecha"><a class="btn sm ghost icon" href="${linkA(vista, prev)}" aria-label="Anterior">${chev('l')}</a><a class="btn sm" href="${linkA(vista, HOY_KEY)}">Hoy</a><a class="btn sm ghost icon" href="${linkA(vista, next)}" aria-label="Siguiente">${chev('r')}</a><span class="etiqueta">${etiqueta}</span></div>
-        ${S.rol === 'medico' ? '' : `<label class="search"><svg class="lupa" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="busca-prof" class="input" placeholder="Buscar profesional o especialidad" value="${esc(q)}" autocomplete="off">${q ? '<button class="btn sm ghost icon" data-action="busca-limpiar" aria-label="Limpiar"><i class="ti ti-x"></i></button>' : ''}</label>`}
+        ${buscador('agenda', S.rol === 'medico' ? 'Buscar paciente o DNI' : 'Buscar profesional, paciente o DNI')}
       </div>
-      ${S.rol === 'medico' ? '' : `<div class="mb" id="prof-tabs">${segProfesionales(p, 'seg-prof', vista === 'dia' ? fecha : HOY_KEY, q)}</div>`}`;
+      ${S.rol === 'medico' ? '' : `<div class="mb" id="prof-tabs">${segProfesionales(p, 'seg-prof', vista === 'dia' ? fecha : HOY_KEY, filtraProf ? q : '')}</div>`}`;
     let body, sub;
-    if (!pr || (S.rol !== 'medico' && !lista.length)) { body = barra + `<div class="panel muted" style="padding:28px;text-align:center">Ningún profesional coincide con la búsqueda. ${q ? 'Borrala para ver todas las agendas.' : ''}</div>`; sub = ''; }
-    else if (vista === 'dia') { const r = diaView(p, fecha, esHoy); body = barra + r.html; sub = r.sub; }
-    else if (vista === 'semana') { const r = semanaView(p, fecha); body = barra + r.html; sub = r.sub; }
+    if (!pr) { body = barra + `<div class="panel muted" style="padding:28px;text-align:center">Ningún profesional coincide con la búsqueda.</div>`; sub = ''; }
+    else if (vista === 'dia') { const r = diaView(p, fecha, esHoy, filtroPac); body = barra + r.html; sub = r.sub; }
+    else if (vista === 'semana') { const r = semanaView(p, fecha, filtroPac); body = barra + r.html; sub = r.sub; }
     else { const r = mesView(p, fecha); body = barra + r.html; sub = r.sub; }
     return shell('agenda', S.rol === 'medico' ? 'Mi agenda' : 'Agenda', sub, body);
   }
 
-  function diaView(p, fecha, esHoy) {
-    const pr = prof(p); const ts = turnosDe(fecha, p); const pasado = fecha < HOY_KEY;
+  function diaView(p, fecha, esHoy, filtroPac) {
+    const pr = prof(p); const pasado = fecha < HOY_KEY;
+    const ts = filtroPac ? PROFESIONALES.flatMap((x) => turnosDe(fecha, x.id)).filter((t) => coincide(filtroPac, nombrePac(pac(t.dni)), pac(t.dni).dni)).sort((a, b) => a.hora.localeCompare(b.hora)) : turnosDe(fecha, p);
     const todos = esHoy ? S.turnos : PROFESIONALES.flatMap((x) => turnosDe(fecha, x.id));
     const atendidos = todos.filter((t) => t.estado === 'atendido').length, espera = todos.filter((t) => t.estado === 'llego').length, novino = todos.filter((t) => t.estado === 'novino').length;
     const sub = S.rol === 'medico' ? `${ts.length} turnos · ${esHoy || pasado ? ts.filter((t) => t.estado === 'atendido').length + ' atendidos' : libresDe(fecha, p) + ' horarios libres'}`
       : esHoy ? `${todos.length} turnos en el centro · ${atendidos} atendidos · ${espera} en espera` : pasado ? `${todos.length} turnos en el centro · ${atendidos} atendidos · ${novino} no vinieron` : `${todos.length} turnos en el centro · ${PROFESIONALES.reduce((a, x) => a + libresDe(fecha, x.id), 0)} horarios libres`;
-    let rows = ts.map((t) => agendaRow(t, { hoy: esHoy, pasado })).join('');
-    if (!ts.length) rows = `<tr><td colspan="8" class="muted" style="padding:28px;text-align:center">${HORARIOS[p] && HORARIOS[p].dias.includes(keyToDate(fecha).getDay()) ? 'Sin turnos este día.' : 'No atiende este día.'}${pr.nota ? ' ' + esc(pr.nota) : ''}</td></tr>`;
+    let rows = ts.map((t) => agendaRow(t, { hoy: esHoy, pasado, conProf: !!filtroPac })).join('');
+    if (!ts.length) rows = `<tr><td colspan="8" class="muted" style="padding:28px;text-align:center">${filtroPac ? `Ningún paciente coincide con "${esc(filtroPac)}" en las agendas de este día.` : HORARIOS[p] && HORARIOS[p].dias.includes(keyToDate(fecha).getDay()) ? 'Sin turnos este día.' : 'No atiende este día.'}${pr.nota && !filtroPac ? ' ' + esc(pr.nota) : ''}</td></tr>`;
     const html = `<div class="panel tight">
-        <div class="head"><div><h2>${esc(pr.nombre)}</h2><div class="small muted">${esc(pr.esp)} · turnos de ${pr.dur} min${pr.gcal ? ' · bloqueos desde Google Calendar' : ''}${!esHoy && !pasado ? ` · ${libresDe(fecha, p)} horarios libres` : ''}</div></div>
+        <div class="head"><div><h2>${filtroPac ? `Pacientes que coinciden con "${esc(filtroPac)}"` : esc(pr.nombre)}</h2><div class="small muted">${filtroPac ? 'En todas las agendas del día' : `${esc(pr.esp)} · turnos de ${pr.dur} min${pr.gcal ? ' · bloqueos desde Google Calendar' : ''}${!esHoy && !pasado ? ` · ${libresDe(fecha, p)} horarios libres` : ''}`}</div></div>
           <div class="row"><button class="btn sm" data-action="nuevo-turno"><i class="ti ti-plus"></i>Agregar turno</button><button class="btn sm" data-action="bloquear"><i class="ti ti-lock"></i>Bloquear horario</button></div></div>
         <div class="table-wrap"><table class="tbl">
           <thead><tr><th>Hora</th><th>Paciente</th><th>Tipo</th><th>Estado</th><th>Llegó</th><th>Entró</th><th>Cobro</th><th></th></tr></thead>
@@ -778,16 +796,16 @@ const METRICAS_ATENCION = {
     return { html, sub };
   }
 
-  function semanaView(p, fecha) {
+  function semanaView(p, fecha, filtroPac) {
     const pr = prof(p); const lunes = lunesDe(fecha); const dias = [0, 1, 2, 3, 4, 5].map((i) => addDays(lunes, i));
     let total = 0, libres = 0;
     const cols = dias.map((k) => {
-      const d = keyToDate(k); const ts = turnosDe(k, p); const atiende = HORARIOS[p] && HORARIOS[p].dias.includes(d.getDay()); const l = libresDe(k, p); total += ts.length; if (k >= HOY_KEY) libres += l;
-      const cards = ts.map((t) => { const pa = pac(t.dni); return `<a href="#/pacientes/${pa.dni}" class="wk-card st-${t.estado}" title="${esc(nombrePac(pa))} · ${esc(t.tipo)} · ${ESTADOS[t.estado]}"><b>${t.hora}</b><span>${esc(pa.apellido)}</span><em>${esc(t.tipo)}</em></a>`; }).join('');
-      const pie = !atiende ? '<div class="wk-libre muted">No atiende</div>' : k < HOY_KEY ? `<div class="wk-libre muted">${ts.filter((t) => t.estado === 'novino').length ? ts.filter((t) => t.estado === 'novino').length + ' no vino' : 'Todo atendido'}</div>` : `<div class="wk-libre">${l} ${l === 1 ? 'horario libre' : 'horarios libres'}</div>`;
+      const d = keyToDate(k); const ts = filtroPac ? PROFESIONALES.flatMap((x) => turnosDe(k, x.id)).filter((t) => coincide(filtroPac, nombrePac(pac(t.dni)), pac(t.dni).dni)).sort((a, b) => a.hora.localeCompare(b.hora)) : turnosDe(k, p); const atiende = HORARIOS[p] && HORARIOS[p].dias.includes(d.getDay()); const l = libresDe(k, p); total += ts.length; if (k >= HOY_KEY) libres += l;
+      const cards = ts.map((t) => { const pa = pac(t.dni); return `<a href="#/pacientes/${pa.dni}" class="wk-card st-${t.estado}" title="${esc(nombrePac(pa))} · ${esc(t.tipo)} · ${ESTADOS[t.estado]}"><b>${t.hora}</b><span>${esc(pa.apellido)}</span><em>${filtroPac ? esc(prof(t.prof).corto) : esc(t.tipo)}</em></a>`; }).join('');
+      const pie = filtroPac ? '' : !atiende ? '<div class="wk-libre muted">No atiende</div>' : k < HOY_KEY ? `<div class="wk-libre muted">${ts.filter((t) => t.estado === 'novino').length ? ts.filter((t) => t.estado === 'novino').length + ' no vino' : 'Todo atendido'}</div>` : `<div class="wk-libre">${l} ${l === 1 ? 'horario libre' : 'horarios libres'}</div>`;
       return `<div class="wk-col ${k === HOY_KEY ? 'hoy' : ''} ${!atiende ? 'off' : ''}"><a href="#/agenda/dia/${k}" class="wk-head"><b>${DIAS[d.getDay()].slice(0, 3)} ${d.getDate()}</b><span>${ts.length ? ts.length + ' turnos' : ''}</span></a><div class="wk-body">${cards}${pie}</div></div>`;
     }).join('');
-    const html = `<div class="panel tight"><div class="head"><div><h2>${esc(pr.nombre)}</h2><div class="small muted">${esc(pr.esp)} · turnos de ${pr.dur} min · tocá un día para abrirlo</div></div>
+    const html = `<div class="panel tight"><div class="head"><div><h2>${filtroPac ? `Pacientes que coinciden con "${esc(filtroPac)}"` : esc(pr.nombre)}</h2><div class="small muted">${filtroPac ? 'En todas las agendas de la semana · tocá un día para abrirlo' : `${esc(pr.esp)} · turnos de ${pr.dur} min · tocá un día para abrirlo`}</div></div>
         <div class="row"><button class="btn sm" data-action="nuevo-turno"><i class="ti ti-plus"></i>Agregar turno</button><button class="btn sm" data-action="bloquear"><i class="ti ti-lock"></i>Bloquear horario</button></div></div>
       <div class="wk">${cols}</div></div>
       <div class="row mt small muted" style="gap:16px"><span><i class="wk-dot st-atendido"></i> atendido</span><span><i class="wk-dot st-novino"></i> no vino</span><span><i class="wk-dot st-confirmado"></i> confirmado</span><span><i class="wk-dot st-solicitado"></i> sin confirmar</span><span><i class="wk-dot st-llego"></i> en espera o en atención</span></div>`;
@@ -836,7 +854,7 @@ const METRICAS_ATENCION = {
     return `<tr${dim}>
       <td class="num" style="font-weight:500">${t.hora}</td>
       <td style="min-width:280px">${linkPac(p)}<span class="sub">DNI ${dniFmt(p.dni)} · ${esc(o.nombre)} · ${origenIcon(t)}${t.reservado ? ' ' + esc(t.reservado) : ''}${t.nuevo ? ' <span class="pill solicitado" style="font-size:11px">Paciente nuevo</span>' : ''}</span></td>
-      <td>${esc(t.tipo)}</td>
+      <td>${esc(t.tipo)}${ctx.conProf ? `<span class="sub">${esc(prof(t.prof).corto)}</span>` : ''}</td>
       <td>${pill(t.estado)}</td>
       <td class="num">${t.llego || '<span class="faint">—</span>'}</td>
       <td class="num">${t.entro || '<span class="faint">—</span>'}</td>
@@ -928,7 +946,7 @@ const METRICAS_ATENCION = {
     </div>`;
   }
   function cajaView() {
-    const p = S.ui.cajaProf; const pr = prof(p); const cobros = cobrosProfHoy(p); const ts = turnosProfHoy(p); const rend = rendicionHoy(p);
+    let p = S.ui.cajaProf; { const l = profesionalesFiltrados(bq('caja')); if (bq('caja') && l.length && !l.some((x) => x.id === p)) p = l[0].id; } const pr = prof(p); const cobros = cobrosProfHoy(p); const ts = turnosProfHoy(p); const rend = rendicionHoy(p);
     const estado = rend ? rend.estado : 'abierta';
     const acc = [];
     acc.push(`<button class="btn" data-action="print" title="Imprimir o guardar como PDF"><i class="ti ti-printer"></i>Imprimir</button>`);
@@ -936,9 +954,10 @@ const METRICAS_ATENCION = {
     if (estado === 'cerrada') acc.push(`<button class="btn primary" data-action="rend-enviar" data-id="${p}"><i class="ti ti-brand-whatsapp"></i>Enviar a ${esc(pr.corto)}</button>`);
     if (estado === 'enviada') acc.push(`<button class="btn teal" data-action="rend-confirmar" data-id="${p}"><i class="ti ti-check"></i>Simular que ${esc(pr.corto)} confirma</button>`);
     const acciones = `<div class="row mt no-print" style="justify-content:flex-end">${acc.join('')}</div>`;
-    const rows = cobros.slice().sort((a, b) => a.hora.localeCompare(b.hora)).map((c) => { const t = turno(c.turno); const pa = pac(c.dni); return `<tr><td class="num">${c.hora}</td><td>${linkPac(pa)}<span class="sub">turno ${t.hora} · ${esc(t.tipo)}</span></td><td>${chipsCobro(c)}</td><td class="amt" style="font-weight:500">${montoCobro(c)}</td><td class="actions"><button class="btn xs ghost" data-action="ver-cobro" data-id="${c.id}">Ver</button></td></tr>`; }).join('');
+    const qc = bq('caja'); const profMatchC = profesionalesFiltrados(qc); const filtraProfC = !!qc && profMatchC.length > 0; const filtroPacC = qc && !filtraProfC ? qc : '';
+    const rows = cobros.slice().filter((c) => !filtroPacC || coincide(filtroPacC, nombrePac(pac(c.dni)), c.dni)).sort((a, b) => a.hora.localeCompare(b.hora)).map((c) => { const t = turno(c.turno); const pa = pac(c.dni); return `<tr><td class="num">${c.hora}</td><td>${linkPac(pa)}<span class="sub">turno ${t.hora} · ${esc(t.tipo)}</span></td><td>${chipsCobro(c)}</td><td class="amt" style="font-weight:500">${montoCobro(c)}</td><td class="actions"><button class="btn xs ghost" data-action="ver-cobro" data-id="${c.id}">Ver</button></td></tr>`; }).join('');
     const pendientes = ts.filter((t) => ['llego', 'atencion', 'atendido'].includes(t.estado) && !cobroDe(t.id));
-    const body = `<div class="mb">${segProfesionales(p, 'seg-caja', HOY_KEY)}</div>
+    const body = `<div class="agenda-bar">${segProfesionales(p, 'seg-caja', HOY_KEY, filtraProfC ? qc : '')}${buscador('caja', 'Buscar profesional, paciente o DNI')}</div>
       <div class="two">
         <div>${receiptHTML(p, cobros, rend, ts, { acciones })}
           ${estado !== 'abierta' ? `<div class="note mt">Rendición cerrada. Si entra un cobro después del cierre, queda en una rendición complementaria del mismo día.</div>` : ''}
@@ -946,7 +965,7 @@ const METRICAS_ATENCION = {
         <div class="stack">
           ${pendientes.length ? `<div class="note warn"><i class="ti ti-alert-circle"></i> ${pendientes.length} turno${pendientes.length > 1 ? 's' : ''} sin cobro registrado: ${pendientes.map((t) => esc(pac(t.dni).apellido) + ' ' + t.hora).join(', ')}. <a href="#/agenda" data-action="ir-agenda" data-id="${p}">Ir a la agenda</a></div>` : ''}
           <div class="panel tight"><div class="head"><h2>Cobros del día</h2><span class="small muted">${cobros.length} movimientos</span></div>
-          <div class="table-wrap"><table class="tbl"><thead><tr><th>Hora</th><th>Paciente</th><th>Medios</th><th class="amt">Importe</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="muted" style="padding:24px;text-align:center">Todavía no hay cobros para este profesional.</td></tr>'}</tbody></table></div></div>
+          <div class="table-wrap"><table class="tbl"><thead><tr><th>Hora</th><th>Paciente</th><th>Medios</th><th class="amt">Importe</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="5" class="muted" style="padding:24px;text-align:center">${filtroPacC ? 'Ningún cobro coincide con la búsqueda.' : 'Todavía no hay cobros para este profesional.'}</td></tr>`}</tbody></table></div></div>
           <div class="note">Cada línea de cobro lleva su medio de pago, así la rendición separa el efectivo que se entrega al profesional de lo que ingresó por transferencia, tarjeta o seña. Las órdenes quedan contadas para la liquidación con la obra social.</div>
         </div>
       </div>`;
@@ -978,14 +997,13 @@ const METRICAS_ATENCION = {
     const delMes = S.rendiciones.filter((r) => r.fecha.startsWith(mesKey));
     const porProf = {};
     delMes.forEach((r) => { const t = totalesRend(r); const a = porProf[r.prof] || (porProf[r.prof] = { efectivo: 0, transferencia: 0, tarjetas: 0, mp: 0, total: 0, ordenes: 0, dias: 0, turnos: 0 }); a.efectivo += t.efectivo; a.transferencia += t.transferencia; a.tarjetas += t.debito + t.credito; a.mp += t.mp; a.total += t.total; a.ordenes += t.ordenes; a.dias++; a.turnos += r.turnos || 0; });
-    const tot = { efectivo: 0, transferencia: 0, tarjetas: 0, mp: 0, total: 0, ordenes: 0, turnos: 0 };
-    const rowsMes = Object.keys(porProf).map((p) => { const a = porProf[p]; Object.keys(tot).forEach((k) => tot[k] += a[k]); return `<tr><td class="name">${esc(prof(p).nombre)}<span class="sub">${a.dias} rendiciones · ${a.turnos} turnos</span></td><td class="amt">${fmt(a.efectivo)}</td><td class="amt">${fmt(a.transferencia)}</td><td class="amt">${fmt(a.tarjetas)}</td><td class="amt">${fmt(a.mp)}</td><td class="amt" style="font-weight:500">${fmt(a.total)}</td><td class="amt">${a.ordenes}</td></tr>`; }).join('');
-    const filtro = S.ui.rendProf || 'todos';
+    const tot = { efectivo: 0, transferencia: 0, tarjetas: 0, mp: 0, total: 0, ordenes: 0, turnos: 0 }; const qr = bq('rend');
+    const rowsMes = Object.keys(porProf).filter((p) => coincide(qr, prof(p).nombre, prof(p).esp)).map((p) => { const a = porProf[p]; Object.keys(tot).forEach((k) => tot[k] += a[k]); return `<tr><td class="name">${esc(prof(p).nombre)}<span class="sub">${a.dias} rendiciones · ${a.turnos} turnos</span></td><td class="amt">${fmt(a.efectivo)}</td><td class="amt">${fmt(a.transferencia)}</td><td class="amt">${fmt(a.tarjetas)}</td><td class="amt">${fmt(a.mp)}</td><td class="amt" style="font-weight:500">${fmt(a.total)}</td><td class="amt">${a.ordenes}</td></tr>`; }).join('');
     const ordenProf = (id) => PROFESIONALES.findIndex((p) => p.id === id);
-    const histAll = S.rendiciones.filter((r) => filtro === 'todos' || r.prof === filtro).sort((a, b) => b.fecha.localeCompare(a.fecha) || ordenProf(a.prof) - ordenProf(b.prof));
+    const histAll = S.rendiciones.filter((r) => coincide(qr, prof(r.prof).nombre, prof(r.prof).esp)).sort((a, b) => b.fecha.localeCompare(a.fecha) || ordenProf(a.prof) - ordenProf(b.prof));
     const hist = S.ui.histTodas ? histAll : histAll.slice(0, 12);
     const rowsHist = hist.map((r) => { const t = totalesRend(r); return `<tr><td class="num">${fechaCorta(r.fecha)}</td><td>${esc(prof(r.prof).nombre)}</td><td class="num">${r.turnos}</td><td class="amt">${fmt(t.efectivo)}</td><td class="amt">${fmt(t.transferencia)}</td><td class="amt">${fmt(t.debito + t.credito)}</td><td class="amt">${fmt(t.mp)}</td><td class="amt" style="font-weight:500">${fmt(t.total)}</td><td><span class="pill ${r.estado === 'recibida' ? 'ok' : 'info'}">${r.estado === 'recibida' ? 'Recibida ' + r.recibida : r.estado === 'enviada' ? 'Enviada' : 'Cerrada'}</span></td><td class="actions"><button class="btn xs ghost" data-action="rend-ver" data-id="${r.id}">Ver</button></td></tr>`; }).join('');
-    const selProf = `<select class="input" style="width:auto" data-action="rend-filtro"><option value="todos">Todos los profesionales</option>${PROFESIONALES.map((p) => `<option value="${p.id}" ${filtro === p.id ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('')}</select>`;
+    const selProf = buscador('rend', 'Buscar profesional');
     const body = `
       <div class="panel tight mb"><div class="head"><div><h2>Resumen de ${mesNombre}</h2><div class="small muted">Suma de las rendiciones cerradas del mes, por profesional y medio de pago</div></div><button class="btn sm" data-action="export-csv"><i class="ti ti-download"></i>Exportar Excel</button></div>
         <div class="table-wrap"><table class="tbl" id="tbl-mes"><thead><tr><th>Profesional</th><th class="amt">Efectivo</th><th class="amt">Transferencias</th><th class="amt">Tarjetas</th><th class="amt">Señas MP</th><th class="amt">Total</th><th class="amt">Órdenes</th></tr></thead>
@@ -994,7 +1012,7 @@ const METRICAS_ATENCION = {
         <div class="table-wrap"><table class="tbl"><thead><tr><th>Obra social</th><th class="amt">Turnos</th><th class="amt">Copagos cobrados</th><th class="amt">Órdenes a liquidar</th></tr></thead>
         <tbody>${RESUMEN_OBRAS_MES.map((o) => `<tr><td>${esc(o.obra)}</td><td class="amt">${o.turnos}</td><td class="amt">${fmt(o.copagos)}</td><td class="amt">${o.ordenes || '—'}</td></tr>`).join('')}</tbody></table></div></div>
       <div class="panel tight"><div class="head"><h2>Historial de rendiciones</h2>${selProf}</div>
-        <div class="table-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Profesional</th><th>Turnos</th><th class="amt">Efectivo</th><th class="amt">Transf.</th><th class="amt">Tarjetas</th><th class="amt">Señas</th><th class="amt">Total</th><th>Estado</th><th></th></tr></thead><tbody>${rowsHist}</tbody></table></div>${histAll.length > hist.length ? `<div style="padding:10px 18px;border-top:1px solid var(--line)"><button class="btn sm ghost" data-action="hist-todas">Mostrar las ${histAll.length} rendiciones</button></div>` : ''}</div>`;
+        <div class="table-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Profesional</th><th>Turnos</th><th class="amt">Efectivo</th><th class="amt">Transf.</th><th class="amt">Tarjetas</th><th class="amt">Señas</th><th class="amt">Total</th><th>Estado</th><th></th></tr></thead><tbody>${rowsHist || '<tr><td colspan="10" class="muted" style="padding:20px;text-align:center">Ninguna rendición coincide con la búsqueda.</td></tr>'}</tbody></table></div>${histAll.length > hist.length ? `<div style="padding:10px 18px;border-top:1px solid var(--line)"><button class="btn sm ghost" data-action="hist-todas">Mostrar las ${histAll.length} rendiciones</button></div>` : ''}</div>`;
     return shell('rendiciones', 'Rendiciones', 'Lo que se le entregó a cada profesional, día por día, y el resumen del mes', body);
   }
   function verRendicion(id) {
@@ -1013,13 +1031,13 @@ const METRICAS_ATENCION = {
 
   /* ---------- pacientes ---------- */
   function pacientesView() {
-    const q = (S.ui.q || '').trim().toLowerCase();
-    const lista = PACIENTES.filter((p) => !q || p.dni.includes(q.replace(/\./g, '')) || nombrePac(p).toLowerCase().includes(q) || p.telefonos.some((t) => t.num.replace(/\s/g, '').includes(q.replace(/\s/g, ''))))
+    const q = bq('pacientes');
+    const lista = PACIENTES.filter((p) => coincide(q, nombrePac(p), p.dni, obra(p.obra).nombre, ...p.telefonos.map((t) => t.num)))
       .sort((a, b) => a.apellido.localeCompare(b.apellido));
     const ultimo = (dni) => { const t = S.turnos.filter((x) => x.dni === dni).sort((a, b) => a.hora.localeCompare(b.hora))[0]; return t ? `hoy ${t.hora} · ${prof(t.prof).corto}` : '—'; };
     const rows = lista.map((p) => `<tr><td class="num">${dniFmt(p.dni)}</td><td>${linkPac(p)}${p.origen !== 'importado' ? ' <span class="pill solicitado" style="font-size:11px">Nuevo</span>' : ''}</td><td class="num">${edad(p.nac)}</td><td>${esc(obra(p.obra).nombre)}</td><td class="small">${p.telefonos.map((t) => `${t.num}${t.propio ? '' : ' <span class="muted">(' + esc(t.titular) + ')</span>'}`).join('<br>')}</td><td class="small muted">${ultimo(p.dni)}</td><td class="actions"><a class="btn xs" href="#/pacientes/${p.dni}">Abrir</a></td></tr>`).join('');
     const body = `<div class="panel tight">
-      <div class="head"><div class="search"><i class="ti ti-search"></i><input id="q" placeholder="Buscar por DNI, apellido o teléfono" value="${esc(S.ui.q || '')}" data-action="buscar"></div><span class="small muted">${lista.length} de ${PACIENTES.length} pacientes · 12.438 en la base completa</span></div>
+      <div class="head">${buscador('pacientes', 'Buscar por DNI, apellido, obra social o teléfono', 'first')}<span class="small muted">${lista.length} de ${PACIENTES.length} pacientes · 12.438 en la base completa</span></div>
       <div class="table-wrap"><table class="tbl"><thead><tr><th>DNI</th><th>Paciente</th><th>Edad</th><th>Obra social</th><th>WhatsApp</th><th>Último turno</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="7" class="muted" style="padding:24px;text-align:center">No hay pacientes con ese dato. Si escribe por WhatsApp, el asistente le pide el DNI y crea la ficha.</td></tr>`}</tbody></table></div></div>`;
     return shell('pacientes', 'Pacientes', 'Una ficha por DNI. Los teléfonos de WhatsApp se vinculan a la ficha, aunque un mismo número reserve para varias personas.', body);
   }
@@ -1032,15 +1050,16 @@ const METRICAS_ATENCION = {
     const tabsHTML = `<div class="tabs">${tabs.map(([id, l, lock]) => `<a href="#/pacientes/${dni}/${id}" class="${tab === id ? 'on' : ''}${lock ? ' lock' : ''}">${lock ? '<i class="ti ti-lock" style="font-size:12px"></i> ' : ''}${l}</a>`).join('')}</div>`;
     let cuerpo = '';
     if (tab === 'ficha') cuerpo = fichaTab(p, o);
-    if (tab === 'turnos') cuerpo = turnosTab(p);
-    if (tab === 'cobros') cuerpo = cobrosTab(p);
-    if (tab === 'historia') cuerpo = clinico ? historiaTab(p) : `<div class="lock-box"><i class="ti ti-lock"></i>La historia clínica solo la ven los profesionales. Recepción ve la ficha, los turnos, los cobros y el estado de los estudios.</div>`;
-    if (tab === 'estudios') cuerpo = estudiosTab(p, clinico);
+    const qp = bq('paciente'); const filtroTab = ['turnos', 'cobros', 'historia', 'estudios'].includes(tab) && !(tab === 'historia' && !clinico) ? `<div class="row between mb" style="gap:12px;flex-wrap:wrap"><span class="small muted">Filtrá por profesional, estudio o texto</span>${buscador('paciente', 'Filtrar por profesional, estudio o texto')}</div>` : '';
+    if (tab === 'turnos') cuerpo = turnosTab(p, qp);
+    if (tab === 'cobros') cuerpo = cobrosTab(p, qp);
+    if (tab === 'historia') cuerpo = clinico ? historiaTab(p, qp) : `<div class="lock-box"><i class="ti ti-lock"></i>La historia clínica solo la ven los profesionales. Recepción ve la ficha, los turnos, los cobros y el estado de los estudios.</div>`;
+    if (tab === 'estudios') cuerpo = estudiosTab(p, clinico, qp);
     const head = `<div class="panel"><div class="pt-head"><div><h1 style="font-size:20px">${esc(nombrePac(p))}</h1>
         <div class="meta"><span><b>DNI</b>${dniFmt(p.dni)}</span><span><b>Edad</b>${edad(p.nac)} años (${fechaCorta(p.nac)})</span><span><b>Obra social</b>${esc(o.nombre)}${p.afiliado ? ' · ' + esc(p.afiliado) : ''}</span><span><b>Origen de la ficha</b>${p.origen === 'importado' ? 'Importada del sistema anterior' : p.origen === 'whatsapp' ? 'Creada por el asistente de WhatsApp' : 'Reserva web'}</span></div>
         ${p.nota ? `<div class="note mt" style="display:inline-block">${esc(p.nota)}</div>` : ''}</div>
         <div class="row"><button class="btn sm" data-action="ver-conv" data-id="${p.dni}"><i class="ti ti-brand-whatsapp"></i>Ver conversación</button><button class="btn sm" data-action="nuevo-turno"><i class="ti ti-calendar-plus"></i>Dar turno</button></div></div>
-      ${tabsHTML}${cuerpo}</div>`;
+      ${tabsHTML}${filtroTab}${cuerpo}</div>`;
     return shell('pacientes', 'Pacientes', '', head);
   }
   function fichaTab(p, o) {
@@ -1058,33 +1077,33 @@ const METRICAS_ATENCION = {
         <div class="row between"><span class="muted">Recordatorio de control</span><span>Automático a los 6 meses de la última consulta</span></div></div>
         <button class="btn sm mt" data-action="editar-ficha"><i class="ti ti-edit"></i>Editar datos</button></div></div>`;
   }
-  function turnosTab(p) {
-    const ts = S.turnos.filter((t) => t.dni === p.dni).sort((a, b) => a.hora.localeCompare(b.hora));
-    const prev = [['2026-04-08', 'Dra. Méndez', 'Consulta', 'Atendido'], ['2025-09-30', 'Dr. Ruiz', 'Consulta', 'Atendido'], ['2025-03-12', 'Ergometría', 'Ergometría', 'Atendido'], ['2024-05-21', 'Dra. Méndez', 'Consulta', 'Atendido']];
+  function turnosTab(p, q) {
+    const ts = S.turnos.filter((t) => t.dni === p.dni && coincide(q, prof(t.prof).nombre, t.tipo, ESTADOS[t.estado])).sort((a, b) => a.hora.localeCompare(b.hora));
+    const prev = [['2026-04-08', 'Dra. Méndez', 'Consulta', 'Atendido'], ['2025-09-30', 'Dr. Ruiz', 'Consulta', 'Atendido'], ['2025-03-12', 'Ergometría', 'Ergometría', 'Atendido'], ['2024-05-21', 'Dra. Méndez', 'Consulta', 'Atendido']].filter((r) => coincide(q, r[1], r[2], r[3]));
     const rows = ts.map((t) => `<tr><td class="num">Hoy ${t.hora}</td><td>${esc(prof(t.prof).corto)}</td><td>${esc(t.tipo)}</td><td>${pill(t.estado)}</td><td class="small muted">${ORIGEN[t.origen][1]}</td></tr>`).join('')
       + (p.origen === 'importado' ? prev.map((r) => `<tr class="dim"><td class="num">${fechaCorta(r[0])}</td><td>${r[1]}</td><td>${r[2]}</td><td><span class="pill atendido">${r[3]}</span></td><td class="small muted">Importado del sistema anterior</td></tr>`).join('') : '');
     return `<div class="panel tight"><div class="head"><h3>Turnos</h3><span class="small muted">Historial completo, incluido lo importado</span></div><div class="table-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Profesional</th><th>Tipo</th><th>Estado</th><th>Origen</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="muted" style="padding:20px;text-align:center">Sin turnos.</td></tr>'}</tbody></table></div></div>`;
   }
-  function cobrosTab(p) {
-    const cs = S.cobros.filter((c) => c.dni === p.dni);
+  function cobrosTab(p, q) {
+    const cs = S.cobros.filter((c) => c.dni === p.dni && coincide(q, prof(c.prof).nombre, ...c.lineas.map((l) => MEDIOS[l.medio].nombre + ' ' + (l.ref || ''))));
     const rows = cs.map((c) => `<tr><td class="num">${fechaCorta(c.fecha)} ${c.hora}</td><td>${esc(prof(c.prof).corto)}</td><td>${chipsCobro(c)}</td><td class="amt" style="font-weight:500">${montoCobro(c)}</td><td class="actions"><button class="btn xs ghost" data-action="ver-cobro" data-id="${c.id}">Ver</button></td></tr>`).join('');
     return `<div class="panel tight"><div class="head"><h3>Cobros</h3></div><div class="table-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Profesional</th><th>Medios</th><th class="amt">Importe</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="muted" style="padding:20px;text-align:center">Sin cobros registrados.</td></tr>'}</tbody></table></div></div>`;
   }
-  function historiaTab(p) {
-    const evs = S.evoluciones.filter((e) => e.dni === p.dni).sort((a, b) => b.fecha.localeCompare(a.fecha) || (b.hora || '').localeCompare(a.hora || ''));
+  function historiaTab(p, q) {
+    const evs = S.evoluciones.filter((e) => e.dni === p.dni && coincide(q, prof(e.prof).nombre, e.texto)).sort((a, b) => b.fecha.localeCompare(a.fecha) || (b.hora || '').localeCompare(a.hora || ''));
     const acc = S.accesos.filter((a) => a.dni === p.dni).slice(-4).reverse();
     const lista = evs.map((e) => `<div class="evo"><div class="when"><b>${fechaMedia(e.fecha)}</b>${e.hora || ''}<br>${esc(prof(e.prof).corto)}</div><div><div class="txt">${esc(e.texto)}</div><div class="by"><span class="pill ok" style="font-size:11px"><i class="ti ti-signature"></i> Firmada</span>${e.importada ? '<span class="pill" style="font-size:11px">Importada del sistema anterior</span>' : ''}<button class="btn xs ghost" data-action="evo-editar" title="Las evoluciones firmadas no se modifican">Editar</button></div></div></div>`).join('');
     const puede = S.rol === 'medico';
     return `<div class="two side-right">
       <div class="panel"><div class="row between"><h3>Evoluciones</h3><span class="small muted">${evs.length} registros</span></div>
-        ${lista || '<p class="muted mt">Sin evoluciones todavía.</p>'}
+        ${lista || `<p class="muted mt">${q ? 'Ninguna evolución coincide con la búsqueda.' : 'Sin evoluciones todavía.'}</p>`}
         ${puede ? `<div class="mt-lg"><h3>Nueva evolución</h3><div class="field mt"><textarea class="input" id="evo-txt" placeholder="Escribí la evolución de hoy. Al guardar queda firmada por vos con fecha y hora."></textarea></div><div id="evo-err" class="tiny" style="color:var(--red);min-height:16px"></div><div class="row"><button class="btn primary" data-action="evo-save" data-id="${p.dni}"><i class="ti ti-signature"></i>Guardar y firmar</button><button class="btn" data-action="adjuntar"><i class="ti ti-paperclip"></i>Adjuntar archivo</button></div></div>` : `<div class="note mt">Dirección ve la historia en modo lectura. Las evoluciones las escriben y firman los profesionales.</div>`}
       </div>
       <div class="stack"><div class="panel"><h3>Antecedentes</h3><div class="small mt stack" style="gap:6px"><div><b class="muted" style="font-weight:500">Alergias</b><br>Sin alergias conocidas</div><div><b class="muted" style="font-weight:500">Medicación habitual</b><br>${p.dni === '10234567' ? 'Enalapril 10 mg c/12 h · Atorvastatina 10 mg' : p.dni === '12345678' ? 'AAS 100 mg · Clopidogrel 75 mg · Rosuvastatina 20 mg' : 'No registra'}</div><div><b class="muted" style="font-weight:500">Antecedentes</b><br>${p.dni === '10234567' ? 'HTA desde 2019. Dislipemia.' : p.dni === '12345678' ? 'Angioplastia con stent (2023). Tabaquismo suspendido.' : 'Sin antecedentes cardiovasculares registrados'}</div></div><button class="btn xs mt" data-action="editar-ficha">Editar antecedentes</button></div>
         <div class="panel"><h3>Accesos a esta historia</h3><div class="small mt stack" style="gap:4px">${acc.map((a) => `<div><span class="muted num">${fechaCorta(a.cuando.slice(0, 10)).slice(0, 5)} ${a.cuando.slice(11)}</span> · ${esc(a.quien)}</div>`).join('') || '<span class="muted">Sin accesos registrados</span>'}</div><p class="tiny muted mt">Cada apertura queda registrada. Las evoluciones no se editan ni se borran: la ley exige integridad e inalterabilidad de la historia clínica.</p></div></div></div>`;
   }
-  function estudiosTab(p, clinico) {
-    const es = S.estudios.filter((e) => e.dni === p.dni).sort((a, b) => b.fecha.localeCompare(a.fecha));
+  function estudiosTab(p, clinico, q) {
+    const es = S.estudios.filter((e) => e.dni === p.dni && coincide(q, e.tipo, prof(e.prof).nombre, e.archivo)).sort((a, b) => b.fecha.localeCompare(a.fecha));
     const est = { realizado: ['warn', 'Realizado, sin informar'], informado: ['info', 'Informado'], enviado: ['ok', 'Enviado al paciente'] };
     const rows = es.map((e) => { const a = []; if (clinico && e.estado === 'realizado') a.push(btn('est-informar', e.id, 'Informar', 'primary')); if (clinico && e.estado === 'informado') a.push(btn('est-enviar', e.id, 'Enviar al paciente', 'primary')); if (e.estado === 'enviado') a.push(btn('est-enviar', e.id, 'Reenviar')); if (clinico && e.estado !== 'realizado') a.push(btn('est-ver', e.id, 'Ver informe')); if (!clinico && e.estado === 'enviado') a.push(`<span class="small muted">El paciente lo tiene en su WhatsApp</span>`); return `<tr><td class="num">${e.fecha === HOY_KEY ? 'Hoy' : fechaCorta(e.fecha)}</td><td class="name">${esc(e.tipo)}<span class="sub">${esc(prof(e.prof).corto)} · ${esc(e.archivo)}</span></td><td><span class="pill ${est[e.estado][0]}">${est[e.estado][1]}</span>${e.enviado ? `<span class="sub">${esc(e.enviado)}</span>` : ''}</td><td class="actions">${a.join(' ')}</td></tr>`; }).join('');
     return `<div class="panel tight"><div class="head"><div><h3>Estudios e informes</h3><div class="small muted">${clinico ? 'El técnico sube el trazado, el profesional informa y el paciente lo recibe por WhatsApp' : 'Si un paciente pregunta si su estudio está listo, acá está la respuesta'}</div></div>${clinico ? `<button class="btn sm" data-action="est-subir" data-id="${p.dni}"><i class="ti ti-upload"></i>Subir estudio</button>` : ''}</div>
@@ -1099,9 +1118,10 @@ const METRICAS_ATENCION = {
 
   /* ---------- informes (médico) ---------- */
   function informesView() {
-    const pend = S.estudios.filter((e) => e.estado === 'realizado'); const sinEnviar = S.estudios.filter((e) => e.estado === 'informado');
+    const qi = bq('informes'); const ok = (e) => coincide(qi, nombrePac(pac(e.dni)), pac(e.dni).dni, e.tipo, prof(e.prof).nombre);
+    const pend = S.estudios.filter((e) => e.estado === 'realizado' && ok(e)); const sinEnviar = S.estudios.filter((e) => e.estado === 'informado' && ok(e));
     const row = (e, acc) => { const p = pac(e.dni); return `<tr><td class="num">${e.fecha === HOY_KEY ? 'Hoy' : fechaCorta(e.fecha)}</td><td>${linkPac(p, 'estudios')}<span class="sub">DNI ${dniFmt(p.dni)} · ${esc(obra(p.obra).nombre)}</span></td><td>${esc(e.tipo)}<span class="sub">${esc(e.archivo)}</span></td><td class="actions">${acc}</td></tr>`; };
-    const body = `<div class="panel tight mb"><div class="head"><div><h2>Para informar</h2><div class="small muted">Estudios realizados que esperan el informe</div></div><span class="pill warn">${pend.length} pendientes</span></div>
+    const body = `<div class="agenda-bar">${buscador('informes', 'Buscar paciente, DNI o estudio')}</div><div class="panel tight mb"><div class="head"><div><h2>Para informar</h2><div class="small muted">Estudios realizados que esperan el informe</div></div><span class="pill warn">${pend.length} pendientes</span></div>
       <div class="table-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Paciente</th><th>Estudio</th><th></th></tr></thead><tbody>${pend.map((e) => row(e, btn('est-informar', e.id, 'Informar', 'primary'))).join('') || '<tr><td colspan="4" class="muted" style="padding:20px;text-align:center">Nada pendiente.</td></tr>'}</tbody></table></div></div>
       <div class="panel tight"><div class="head"><div><h2>Informados, sin enviar</h2><div class="small muted">Listos para que el paciente los reciba por WhatsApp</div></div></div>
       <div class="table-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Paciente</th><th>Estudio</th><th></th></tr></thead><tbody>${sinEnviar.map((e) => row(e, btn('est-ver', e.id, 'Ver') + ' ' + btn('est-enviar', e.id, 'Enviar al paciente', 'primary'))).join('') || '<tr><td colspan="4" class="muted" style="padding:20px;text-align:center">Todo enviado.</td></tr>'}</tbody></table></div></div>`;
@@ -1151,16 +1171,17 @@ const METRICAS_ATENCION = {
   function importacionView() {
     const body = `<div class="kpis mb"><div class="kpi"><div class="l">Pacientes importados</div><div class="v">12.438</div><div class="d">desde 2010</div></div><div class="kpi"><div class="l">Vinculados por DNI</div><div class="v">11.902</div><div class="d">95,7 % sin intervención</div></div><div class="kpi"><div class="l">Evoluciones</div><div class="v">48.210</div><div class="d">firmadas como importadas</div></div><div class="kpi"><div class="l">Archivos</div><div class="v">9.874</div><div class="d">estudios e informes, 6,1 GB</div></div><div class="kpi"><div class="l">A revisar</div><div class="v">536</div><div class="d">fichas con dudas</div></div></div>
       <div class="panel mb"><div class="row between"><h2>Cruce por DNI</h2><span class="small muted">Última corrida: ayer 23:10 · próxima: cuando ICOM entregue el export final</span></div><div class="bar mt"><span style="width:95.7%"></span></div><div class="small muted mt">Cada ficha del sistema anterior se busca por DNI. Si coincide, se unen el historial, los turnos y los archivos. Si hay dudas, queda en la lista de abajo y nada se pierde.</div></div>
-      <div class="panel tight"><div class="head"><div><h2>Fichas a revisar</h2><div class="small muted">Ejemplos de los casos que no cierran solos</div></div><button class="btn sm" data-action="descargar-lista"><i class="ti ti-download"></i>Descargar lista completa</button></div>
-      <div class="table-wrap"><table class="tbl"><thead><tr><th>DNI</th><th>Ficha anterior</th><th>Motivo</th><th>Qué se hace</th></tr></thead><tbody>${IMPORT_REVISAR.map((r) => `<tr><td class="num">${esc(r.dni)}</td><td>${esc(r.nombre)}</td><td class="small">${esc(r.motivo)}</td><td class="small muted">${esc(r.accion)}</td></tr>`).join('')}</tbody></table></div></div>`;
+      <div class="panel tight"><div class="head"><div><h2>Fichas a revisar</h2><div class="small muted">Ejemplos de los casos que no cierran solos</div></div>${buscador('import', 'Buscar DNI, nombre o motivo')}<button class="btn sm" data-action="descargar-lista"><i class="ti ti-download"></i>Descargar lista completa</button></div>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>DNI</th><th>Ficha anterior</th><th>Motivo</th><th>Qué se hace</th></tr></thead><tbody>${IMPORT_REVISAR.filter((r) => coincide(bq('import'), r.dni, r.nombre, r.motivo)).map((r) => `<tr><td class="num">${esc(r.dni)}</td><td>${esc(r.nombre)}</td><td class="small">${esc(r.motivo)}</td><td class="small muted">${esc(r.accion)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted" style="padding:20px;text-align:center">Ninguna ficha coincide con la búsqueda.</td></tr>'}</tbody></table></div></div>`;
     return shell('importacion', 'Importación del sistema anterior', 'Historias clínicas, turnos y archivos de ICOM, cruzados por DNI con las fichas nuevas', body);
   }
   function configView() {
-    const profs = PROFESIONALES.map((p) => `<tr><td class="name">${esc(p.nombre)}<span class="sub">${esc(p.esp)}</span></td><td class="num">${p.dur} min</td><td><span class="pill ok">Sincronizada</span></td><td>${p.gcal ? '<span class="pill info">Google Calendar</span>' : '<span class="muted small">—</span>'}</td><td class="num small">${esc(p.tel || '—')}</td><td class="actions"><button class="btn xs ghost" data-action="editar">Editar</button></td></tr>`).join('');
-    const obras = OBRAS.map((o) => `<tr><td>${esc(o.nombre)}</td><td class="amt">${o.id === 'part' ? fmt(o.copago) : o.copago ? fmt(o.copago) : 'Sin copago'}</td><td class="amt">${o.id === 'part' ? fmt(o.copagoEstudio) : o.copagoEstudio ? fmt(o.copagoEstudio) : 'Sin copago'}</td><td>${o.orden ? 'Sí' : 'No'}</td><td class="actions"><button class="btn xs ghost" data-action="editar">Editar</button></td></tr>`).join('');
-    const cupos = CUPOS.map((c) => `<tr><td>${esc(prof(c.prof).nombre)}</td><td>${esc(obra(c.obra).nombre)}</td><td>${c.dia}</td><td class="num">${c.cupos}</td><td class="small">${c.libera}</td><td class="num">${c.usados} de ${c.cupos}</td></tr>`).join('');
-    const users = USUARIOS.map((u) => `<tr><td class="name">${esc(u.nombre)}</td><td>${u.rol}</td><td class="small muted">${esc(u.acceso)}</td></tr>`).join('');
-    const body = `<div class="stack" style="gap:16px">
+    const qg = bq('config');
+    const profs = PROFESIONALES.filter((p) => coincide(qg, p.nombre, p.esp)).map((p) => `<tr><td class="name">${esc(p.nombre)}<span class="sub">${esc(p.esp)}</span></td><td class="num">${p.dur} min</td><td><span class="pill ok">Sincronizada</span></td><td>${p.gcal ? '<span class="pill info">Google Calendar</span>' : '<span class="muted small">—</span>'}</td><td class="num small">${esc(p.tel || '—')}</td><td class="actions"><button class="btn xs ghost" data-action="editar">Editar</button></td></tr>`).join('');
+    const obras = OBRAS.filter((o) => coincide(qg, o.nombre)).map((o) => `<tr><td>${esc(o.nombre)}</td><td class="amt">${o.id === 'part' ? fmt(o.copago) : o.copago ? fmt(o.copago) : 'Sin copago'}</td><td class="amt">${o.id === 'part' ? fmt(o.copagoEstudio) : o.copagoEstudio ? fmt(o.copagoEstudio) : 'Sin copago'}</td><td>${o.orden ? 'Sí' : 'No'}</td><td class="actions"><button class="btn xs ghost" data-action="editar">Editar</button></td></tr>`).join('');
+    const cupos = CUPOS.filter((c) => coincide(qg, prof(c.prof).nombre, obra(c.obra).nombre)).map((c) => `<tr><td>${esc(prof(c.prof).nombre)}</td><td>${esc(obra(c.obra).nombre)}</td><td>${c.dia}</td><td class="num">${c.cupos}</td><td class="small">${c.libera}</td><td class="num">${c.usados} de ${c.cupos}</td></tr>`).join('');
+    const users = USUARIOS.filter((u) => coincide(qg, u.nombre, u.rol)).map((u) => `<tr><td class="name">${esc(u.nombre)}</td><td>${u.rol}</td><td class="small muted">${esc(u.acceso)}</td></tr>`).join('');
+    const body = `<div class="agenda-bar">${buscador('config', 'Buscar profesional, obra social o usuario')}</div><div class="stack" style="gap:16px">
       <div class="panel tight"><div class="head"><div><h2>Profesionales y agendas</h2><div class="small muted">Cada agenda está sincronizada con el sistema de atención: lo que reserva el asistente aparece acá, y lo que se bloquea acá deja de ofrecerse</div></div><button class="btn sm" data-action="editar"><i class="ti ti-plus"></i>Agregar profesional</button></div><div class="table-wrap"><table class="tbl"><thead><tr><th>Profesional</th><th>Turno</th><th>Agenda</th><th>Bloqueos</th><th>WhatsApp</th><th></th></tr></thead><tbody>${profs}</tbody></table></div></div>
       <div class="panel tight"><div class="head"><div><h2>Obras sociales y copagos</h2><div class="small muted">Lo que el asistente informa y lo que recepción ve sugerido al cobrar. Se actualiza cuando cambian los aranceles.</div></div></div><div class="table-wrap"><table class="tbl"><thead><tr><th>Obra social</th><th class="amt">Consulta</th><th class="amt">Estudio</th><th>Pide orden</th><th></th></tr></thead><tbody>${obras}</tbody></table></div></div>
       <div class="panel tight"><div class="head"><div><h2>Cupos por obra social</h2><div class="small muted">Reglas que el asistente respeta al ofrecer turnos. Cuando se acaban, ofrece particular o el mes siguiente.</div></div><button class="btn sm" data-action="editar"><i class="ti ti-plus"></i>Agregar regla</button></div><div class="table-wrap"><table class="tbl"><thead><tr><th>Profesional</th><th>Obra social</th><th>Días</th><th>Cupos</th><th>Se liberan</th><th>Este mes</th></tr></thead><tbody>${cupos}</tbody></table></div></div>
@@ -1179,7 +1200,7 @@ const METRICAS_ATENCION = {
   const CANAL = { whatsapp: ['ti-brand-whatsapp', 'WhatsApp'], web: ['ti-world', 'Web'], instagram: ['ti-brand-instagram', 'Instagram'] };
   function conversacionesView() {
     const sel = S.ui.conv || CONVERSACIONES[0].id; const c = CONVERSACIONES.find((x) => x.id === sel) || CONVERSACIONES[0];
-    const filtro = S.ui.convFiltro || 'todas'; const visibles = filtro === 'derivadas' ? CONVERSACIONES.filter((x) => x.estado === 'derivada') : CONVERSACIONES;
+    const qv = bq('conv'); const filtro = S.ui.convFiltro || 'todas'; const visibles = (filtro === 'derivadas' ? CONVERSACIONES.filter((x) => x.estado === 'derivada') : CONVERSACIONES).filter((x) => coincide(qv, nombrePac(pac(x.dni)), pac(x.dni).dni, x.motivo));
     const estadoPill = (e) => e === 'derivada' ? '<span class="pill warn">Derivada · espera respuesta</span>' : e === 'respondida' ? '<span class="pill ok">Respondida por recepción</span>' : '<span class="pill info">Resuelta por el asistente</span>';
     const lista = visibles.map((x) => { const p = pac(x.dni); const k = CANAL[x.canal]; return `<a href="#/conversaciones/${x.id}" class="conv ${x.id === c.id ? 'on' : ''}"><div class="row between"><b>${esc(nombrePac(p))}</b><span class="tiny muted num">${x.hora}</span></div><div class="small muted"><i class="ti ${k[0]}"></i> ${k[1]} · ${esc(x.motivo)}</div><div class="mt-xs">${estadoPill(x.estado)}</div></a>`; }).join('');
     const p = pac(c.dni);
@@ -1187,7 +1208,7 @@ const METRICAS_ATENCION = {
     const d = CONVERSACIONES.filter((x) => x.estado === 'derivada').length;
     const body = `<div class="note info mb"><i class="ti ti-info-circle"></i> Esta bandeja vive en el sistema de atención: desde acá se abre en una pestaña con el mismo usuario. Se muestra para ver cómo llega lo derivado. Hoy: ${METRICAS_ATENCION.conversaciones > 0 ? '86' : ''} conversaciones, 81 resueltas por el asistente, 5 derivadas, ${d} esperando respuesta.</div>
       <div class="two conv-grid">
-        <div class="panel tight"><div class="head" style="flex-wrap:wrap;gap:10px"><h2>Hoy</h2><span class="seg" style="flex-wrap:nowrap"><button class="${filtro === 'derivadas' ? 'on' : ''}" data-action="conv-filtro" data-id="derivadas">Derivadas <span class="n">${d}</span></button><button class="${filtro === 'todas' ? 'on' : ''}" data-action="conv-filtro" data-id="todas">Todas <span class="n">${CONVERSACIONES.length}</span></button></span></div><div class="convs">${lista || '<div class="muted small" style="padding:16px">Nada pendiente.</div>'}</div></div>
+        <div class="panel tight"><div class="head" style="flex-wrap:wrap;gap:10px"><h2>Hoy</h2><span class="seg" style="flex-wrap:nowrap"><button class="${filtro === 'derivadas' ? 'on' : ''}" data-action="conv-filtro" data-id="derivadas">Derivadas <span class="n">${d}</span></button><button class="${filtro === 'todas' ? 'on' : ''}" data-action="conv-filtro" data-id="todas">Todas <span class="n">${CONVERSACIONES.length}</span></button></span></div><div style="padding:10px 12px;border-bottom:1px solid var(--line)">${buscador('conv', 'Buscar paciente, DNI o motivo', 'full')}</div><div class="convs">${lista || `<div class="muted small" style="padding:16px">${qv ? 'Ninguna conversación coincide con la búsqueda.' : 'Nada pendiente.'}</div>`}</div></div>
         <div class="panel tight"><div class="head"><div><h2>${esc(nombrePac(p))}</h2><div class="small muted">DNI ${dniFmt(p.dni)} · ${esc(obra(p.obra).nombre)} · ${p.telefonos[0].num}${p.telefonos[0].propio ? '' : ' (' + esc(p.telefonos[0].titular) + ')'}</div></div><div class="row"><a class="btn sm" href="#/pacientes/${p.dni}"><i class="ti ti-user"></i>Ficha</a><a class="btn sm" href="#/pacientes/${p.dni}/turnos"><i class="ti ti-calendar"></i>Turnos</a></div></div>
           <div class="chat">${msgs}</div>
           <div class="chatbox"><input class="input" placeholder="Escribí para responder vos: el asistente se hace a un lado en esta conversación" data-action="chat-input"><button class="btn primary" data-action="chat-send" data-id="${c.id}"><i class="ti ti-send"></i>Responder</button></div></div>
@@ -1260,8 +1281,7 @@ const METRICAS_ATENCION = {
     else if (name === 'tablero') html = tableroView();
     else if (name === 'accesos') html = accesosView();
     app.innerHTML = html;
-    if (name === 'pacientes' && !r.parts[1]) { const q = $('#q'); if (q && S.ui.qFocus) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
-    if (name === 'agenda') { const b = $('#busca-prof'); if (b && S.ui.buscaFocus) { b.focus(); b.setSelectionRange(b.value.length, b.value.length); } }
+    if (S.ui.bFocus) { const b = $('.buscador[data-key="' + S.ui.bFocus + '"]'); if (b) { b.focus(); b.setSelectionRange(b.value.length, b.value.length); } }
     window.scrollTo(0, 0);
   }
 
@@ -1281,7 +1301,7 @@ const METRICAS_ATENCION = {
     if (a === 'entro') { const t = turno(id); t.estado = 'atencion'; t.entro = ahoraHM(); save(); render(); return; }
     if (a === 'atendido') { const t = turno(id); t.estado = 'atendido'; t.salio = ahoraHM(); save(); render(); toast('Turno atendido', 'Se sincroniza con el sistema de atención: sale la encuesta y queda programado el recordatorio de control.'); return; }
     if (a === 'novino') { const t = turno(id); t.estado = 'novino'; save(); render(); toast('Marcado como no vino', 'El sistema de atención le escribe en 3 días para ofrecerle un turno nuevo.'); return; }
-    if (a === 'busca-limpiar') { S.ui.busca = ''; save(); render(); return; }
+    if (a === 'busca-limpiar') { S.ui.b = S.ui.b || {}; S.ui.b[id] = ''; save(); render(); return; }
     if (a === 'cancelar') { toast('Cancelar turno', 'El paciente recibe el aviso por WhatsApp y el horario vuelve a ofrecerse al instante.'); return; }
     if (a === 'reprogramar') { toast('Reprogramar', 'Abre el calendario del profesional con los horarios libres; el paciente recibe la confirmación por WhatsApp.'); return; }
     if (a === 'nuevo-turno' || a === 'bloquear') { toast(a === 'bloquear' ? 'Bloquear horario' : 'Agregar turno', 'Se hace sobre la misma agenda que usa el asistente: el horario deja de ofrecerse al instante.'); return; }
@@ -1318,8 +1338,11 @@ const METRICAS_ATENCION = {
   document.addEventListener('input', (ev) => {
     const el = ev.target;
     if (el.closest && el.closest('#lineas')) { if (el.name === 'medio') { refrescarCobro(); } else if (el.name === 'importe') { COBRO.lineas = leerLineas(); $('#cobro-total').textContent = fmt(totales([COBRO]).total); } return; }
-    if (el.id === 'q') { S.ui.q = el.value; S.ui.qFocus = true; save(); render(); S.ui.qFocus = false; }
-    if (el.id === 'busca-prof') { S.ui.busca = el.value; const l = profesionalesFiltrados(el.value); if (l.length && !l.some((x) => x.id === S.ui.prof)) S.ui.prof = l[0].id; S.ui.buscaFocus = true; save(); render(); S.ui.buscaFocus = false; }
+    if (el.classList && el.classList.contains('buscador')) {
+      const k = el.dataset.key; S.ui.b = S.ui.b || {}; S.ui.b[k] = el.value;
+      if (k === 'agenda' || k === 'caja') { const l = profesionalesFiltrados(el.value); const cur = k === 'agenda' ? 'prof' : 'cajaProf'; if (el.value && l.length && !l.some((x) => x.id === S.ui[cur])) S.ui[cur] = l[0].id; }
+      S.ui.bFocus = k; save(); render(); S.ui.bFocus = null;
+    }
   });
   document.addEventListener('change', (ev) => { const el = ev.target; if (el.dataset && el.dataset.action === 'rend-filtro') { S.ui.rendProf = el.value; save(); render(); } });
   document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeModal(); if (ev.key === 'Enter' && ev.target.dataset && ev.target.dataset.action === 'chat-input') { const b = $('[data-action=chat-send]'); if (b) b.click(); } if (ev.key === 'Enter' && ev.target.id === 'portal-dni') { const b = $('[data-action=portal-ok]'); if (b) b.click(); } });

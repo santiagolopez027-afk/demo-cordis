@@ -21,3 +21,7 @@ Potenta AI · 2026
 - **Agenda por día, semana y mes**, con navegación entre fechas (anterior, hoy, siguiente). Las rutas son `#/agenda/dia/AAAA-MM-DD`, `#/agenda/semana/AAAA-MM-DD` y `#/agenda/mes/AAAA-MM`.
 - Los turnos de hoy salen de `data.js`; los de cualquier otro día se generan de forma estable (misma fecha, mismos turnos) según el horario de cada agenda (`HORARIOS` en `app.js`): días pasados atendidos o no vino, con su cobro; días futuros confirmados o sin confirmar, con horarios libres.
 - **Buscador de profesionales** (por nombre o especialidad) que filtra las pestañas de agendas; pensado para un centro con 40 agendas.
+
+## v3.1 (28/10/2026)
+
+- **Buscador en toda pantalla con profesionales o pacientes**: agenda (profesional, paciente o DNI; si el texto es un paciente, lo busca en todas las agendas del día o de la semana), caja, rendiciones, pacientes, ficha del paciente (turnos, cobros, historia y estudios), informes, conversaciones, importación y configuración. Un solo componente (`buscador(key, placeholder)`) y un solo filtro (`coincide`), sin tildes ni puntos.

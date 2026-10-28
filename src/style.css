@@ -323,3 +323,11 @@ a.mes-cell:hover{background:#F7F9FC}
 .mes-d{font-weight:600;font-size:13px}
 .mes-n{font-weight:500}.mes-cell i{font-style:normal}.mes-ok{color:var(--green)}.mes-nv{color:var(--red)}.mes-libre{color:var(--teal)}.mes-off{color:var(--line-2)}
 @media (max-width:980px){.wk{grid-template-columns:repeat(3,minmax(0,1fr))}.wk-col{min-height:200px;border-bottom:1px solid var(--line)}.mes-cell{min-height:64px;padding:6px;font-size:12px}.mes-cell i{display:none}.mes-cell .mes-ok:not(:has(b)){display:none}.search{min-width:0;max-width:none;margin-left:0;flex-basis:100%}}
+
+/* ---- v3.1: buscador en toda página con médicos o pacientes ---- */
+.head .search{margin-left:auto;flex:0 1 320px;min-width:200px}
+.search.first{margin-left:0;margin-right:auto}
+.search.full{margin-left:0;max-width:none;flex:1}
+.search .btn.icon{padding:4px 6px}
+.search .lupa{pointer-events:none}
+@media (max-width:980px){.head .search{flex-basis:100%}}
